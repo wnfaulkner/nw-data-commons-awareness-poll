@@ -10,25 +10,11 @@
     options(java.parameters = "- Xmx8g") #helps r not to fail when importing large xlsx files with xlsx package
     
   # SECTION & CODE CLOCKING
-    
     sections.all.starttime <- Sys.time()
     section0.starttime <- sections.all.starttime
-  
-  # ESTABLISH BASE DIRECTORIES
-    
-    # Set Working Directory and R Project Directory
 
-      wd <- "/home/wnf/code/2024-11-NW-Data-for-Social-Sciences"
-
-    # #Set Source Tables Directory (raw data, configs, etc.)
-    #   source.tables.dir <- paste0(wd, "/1-source-data")
-
-    #   if(dir.exists(source.tables.dir)){ 
-    #     print("source.tables.dir exists.")
-    #   }else{
-    #     print("source.tables.dir DOES NOT EXIST.")
-    #   }
-    #   print(source.tables.dir)
+  # SET WORKING DIRECTORY
+    wd <- "/home/wnf/code/nw-data-commons-awareness-poll"
   
   # LOAD LIBRARIES/PACKAGES
     library(wnf.utils)
@@ -172,24 +158,20 @@
     
     clean_object_names <- 
       c(
-        "temperature.clean.tb",
-        "precipitation.clean.tb",
-        "uv.clean.tb",
-        "agriculture.clm.clean.tb",
-        "agriculture.agmip.clean.tb",
-        "fish.catch.clean.tb",
-        "sea.ice.clean.tb"
+        "data.tb",
+        "awareness.tb",
+        "casualty.causes.tb",
+        "support.reaction.tb",
+        "decision.factors.tb"
       )
     
     clean_table_names <- 
       c(
-        "1.temperature",
-        "2.precipitation",
-        "3.uv",
-        "4a.agriculture.clm",
-        "4b.agriculture.agmip",
-        "5.fishcatch",
-        "6.sea.ice"
+        "1.wide.data",
+        "2.awareness",
+        "3.casualty.causes",
+        "4.support.reaction",
+        "5.decision.factors"
       )
     
     export.ls <- 
@@ -211,12 +193,12 @@
       Sys.time() %>% 
       gsub(":",".",.) 
       
-    output.dir <-
+    output.dir <- 
       paste(
         wd,
-        "\\2. Reformatted Source Data\\",
+        "/outputs/",
         output.base.name,
-        "\\",
+        "/",
         sep = ""
       )
     
@@ -226,18 +208,18 @@
     
   # WRITE CSV FILES INTO OUTPUT DIRECTORY
     
-    ExportCsvs <- 
-      function(table, table_name){
-        file.name <- paste(table_name,"_",output.base.name,".csv",sep="")
-        write.csv(table, file.name, row.names = FALSE, na = "")
-      }
+    # ExportCsvs <- 
+    #   function(table, table_name){
+    #     file.name <- paste(table_name,"_",output.base.name,".csv",sep="")
+    #     write.csv(table, file.name, row.names = FALSE, na = "")
+    #   }
     
-    setwd(output.dir)
-    Map(
-      ExportCsvs,
-      export.ls,
-      names(export.ls)
-    )
+    # setwd(output.dir)
+    # Map(
+    #   ExportCsvs,
+    #   export.ls,
+    #   names(export.ls)
+    # )
     
   # WRITE TABLES INTO SINGLE EXCEL FILE IN OUTPUT DIRECTORY
     
