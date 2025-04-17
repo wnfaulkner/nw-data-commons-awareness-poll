@@ -2,7 +2,7 @@
 #0000       2024-11 NW Awareness Poll Data              0000#
 #00000000000000000000000000000000000000000000000000000000000#
 
-# 0-SETUP --------------------------------------------------------------------------------
+# 0-SETUP -------------------------------------------------------------------------------
 	
   # INITIAL SETUP
     rm(list=ls()) #Remove lists
@@ -31,7 +31,7 @@
     section0.duration <- Sys.time() - section0.starttime
     section0.duration
     
-# 1-IMPORT DATA & CONFIGS --------------------------------------------------------------------------------
+# 1-IMPORT DATA & CONFIGS -------------------------------------------------------------------------------
     
     gs4_auth(email = "william@fluxrme.com")
     
@@ -55,7 +55,7 @@
       ListToTibbleObjects(data.and.configs.ls) #Converts list elements to separate tibble objects names with their respective sheet names with ".tb" appended
     
 
-# 2-CLEANING & RESHAPING --------------------------------------------------------------------------------
+# 2-CLEANING & RESHAPING -------------------------------------------------------------------------------
 
   # CLEAN UP NAMES ACCORDING TO CONFIGS TABLE
     names(data.tb) <- IndexMatchToVectorFromTibble(
@@ -78,20 +78,63 @@
         shown.infographic == "B" ~ "no infographic",
       ))
 
+  # RECODE TEXT VALUES FROM RESPONSE OPTIONS
+
+    #Step 1: Create a lookup table that connects var.name (from data.tb) to q.theme (in response.options.tb)
+    recode.mapping.tb <- questions.tb %>%
+      filter(q.theme %in% unique(response.options.tb$q.theme)) %>%
+      select(var.name, q.theme)
+
+    #Step 2: Recode each variable based on the response.options.tb
+    recode_from_theme <- function(varname, theme) {
+      if (!varname %in% names(data.tb)) return(NULL)
+      
+      # Get response options for this theme
+      options.tb <- response.options.tb %>%
+        filter(q.theme == theme) %>%
+        select(response.option, response.text)
+      
+      if (nrow(options.tb) == 0) return(NULL)
+
+      # Ensure column is character for safe indexing
+      data.tb[[varname]] <- as.character(data.tb[[varname]])
+
+      # Build named vector for recoding
+      recode.vector <- setNames(options.tb$response.text, as.character(options.tb$response.option))
+
+      # Perform recoding using named vector
+      data.tb[[varname]] <<- recode.vector[data.tb[[varname]]]
+    }
+
+    #Step 3: Apply to each variable that needs recoding
+    walk2(recode.mapping.tb$var.name, recode.mapping.tb$q.theme, recode_from_theme)
+
+    # data.tb <- reduce2(
+    #   recode.mapping.tb$var.name,
+    #   recode.mapping.tb$q.theme,
+    #   .init = data.tb,
+    #   .f = function(dt, varname, theme) {
+    #     # same recode logic, but return dt
+    #     ...
+    #     dt[[varname]] <- ...
+    #     dt
+    #   }
+    # )
+
   # RESHAPE - DEFINE ABSTRACTED FUNCTION
     ReshapeThemeTable <- function(theme, data_table, questions_table, response_options_table) {  
       # 1. Identify ID vars
-      id.vars <- questions.tb %>%
+      id.vars <- questions_table %>%
         filter(var.category == "id.var") %>%
         pull(var.name)
       
       # 2. Identify columns for the given theme
-      theme.vars <- questions.tb %>%
+      theme.vars <- questions_table %>%
         filter(q.theme == theme) %>%
         select(q.theme, var.name, q.num)  # keep both var name and q.num for later join
       
       # 3. Reshape data from wide to long
-      long.tb <- data.tb %>%
+      long.tb <- data_table %>%
         select(all_of(id.vars), all_of(theme.vars$var.name)) %>%
         pivot_longer(
           cols = -all_of(id.vars),
@@ -99,22 +142,13 @@
           values_to = "value"
         )
       
-      # 4. Attach q.theme to each category (for joining with response options)
+      # 4. Attach q.theme and q.num to each category using questions.tb
       long.tb <- long.tb %>%
         left_join(theme.vars, by = c("category" = "var.name"))
       
-      # 5. Join with response.options.tb using q.theme and value
+      # 5. Rename value to value.text for consistency
       long.tb <- long.tb %>%
-        left_join(
-          .,
-          response.options.tb,
-          by = c("q.theme", "value" = "response.option")
-        ) %>%
-        select(-q.theme, -q.num)
-      
-      # 6. Rename response.text column for clarity
-      long.tb <- long.tb %>%
-        rename(value.text = response.text)
+        rename(value.text = value)
       
       return(long.tb)
     }
@@ -152,7 +186,7 @@
     )
 
   
-# 3-EXPORT --------------------------------------------------------------------------------
+# 3-EXPORT -------------------------------------------------------------------------------
   
   # CREATE FINAL LIST OF CLEANED & REFORMATTED TABLES FOR EXPORT
     
@@ -162,7 +196,8 @@
         "awareness.tb",
         "casualty.causes.tb",
         "support.reaction.tb",
-        "decision.factors.tb"
+        "decision.factors.tb",
+        "questions.tb"
       )
     
     clean_table_names <- 
@@ -171,7 +206,8 @@
         "2.awareness",
         "3.casualty.causes",
         "4.support.reaction",
-        "5.decision.factors"
+        "5.decision.factors",
+        "questions"
       )
     
     export.ls <- 
