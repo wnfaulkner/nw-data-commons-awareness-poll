@@ -71,6 +71,10 @@
       filter(var.category == "id.var") %>%
       pull(var.name)
   
+  # REMOVE EXTRA COLUMNS NOT GOING TO USE
+    data.tb %<>%
+      select(-started.at, -reviewed.at, -archived.at, -completion.code, -total.approvals, -status, -submission.id)
+
   # RECODE INFOGRAPHIC
     data.tb %<>%
       mutate(shown.infographic = case_when(
@@ -121,8 +125,14 @@
     #   }
     # )
 
+    data.tb <- data.tb %>%
+      mutate(across(
+        everything(),
+        ~ifelse(.x == "0. not participating", NA, .x)
+      ))
+
   # RESHAPE - DEFINE ABSTRACTED FUNCTION
-    ReshapeThemeTable <- function(theme, data_table, questions_table, response_options_table) {  
+    ReshapeThemeTable <- function(theme, data_table, questions_table, response_options_table, drop_not_participating = FALSE) {  
       # 1. Identify ID vars
       id.vars <- questions_table %>%
         filter(var.category == "id.var") %>%
@@ -146,10 +156,20 @@
       long.tb <- long.tb %>%
         left_join(theme.vars, by = c("category" = "var.name"))
       
-      # 5. Rename value to value.text for consistency
+      # 5. Rename value to value.text
       long.tb <- long.tb %>%
         rename(value.text = value)
+
+      # 6. Convert "0. not participating" → NA
+      long.tb <- long.tb %>%
+        mutate(value.text = ifelse(value.text == "0. not participating", NA, value.text))
       
+      # 7. Optionally drop rows that were non-participants (after conversion to NA)
+      if (drop_not_participating) {
+        long.tb <- long.tb %>%
+          filter(shown.infographic == "shown infographic")
+      }
+
       return(long.tb)
     }
 
@@ -158,7 +178,8 @@
       theme = "awareness",
       data_table = data.tb,
       questions_table = questions.tb,
-      response_options_table = response.options.tb
+      response_options_table = response.options.tb,
+      drop_not_participating = TRUE
     )
 
   # RESHAPE - CASUALTY CAUSES
@@ -166,7 +187,8 @@
       theme = "casualty.causes",
       data_table = data.tb,
       questions_table = questions.tb,
-      response_options_table = response.options.tb
+      response_options_table = response.options.tb,
+      drop_not_participating = TRUE
     )
 
   # RESHAPE - SUPPORT REACTION
