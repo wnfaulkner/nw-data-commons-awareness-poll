@@ -4,8 +4,9 @@
 
 CLEANING
   -- Replace values in original data with text from response.options.tb (or at least make new variables)
-- Remove rows in reshaped tables for those who didn't respond to a section/question because they weren't shown the infographic (currently "0. did not participate"). 
+  -- Remove rows in reshaped tables for those who didn't respond to a section/question because they weren't shown the infographic (currently "0. did not participate"). 
 - In all tables, make "0. Did not participate" into NA so it exports blank into the final xlsx file (indicates that the person did not respond to the question because they did not get selected to see the infographics)
+- Make sure q.id and q.num don't get exported with final tables
 
 
 EXPORT
