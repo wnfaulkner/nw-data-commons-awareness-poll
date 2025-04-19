@@ -6,7 +6,13 @@ CLEANING
   -- Replace values in original data with text from response.options.tb (or at least make new variables)
   -- Remove rows in reshaped tables for those who didn't respond to a section/question because they weren't shown the infographic (currently "0. did not participate"). 
 - In all tables, make "0. Did not participate" into NA so it exports blank into the final xlsx file (indicates that the person did not respond to the question because they did not get selected to see the infographics)
+- Remove country.of.residence var (values are the same as 'nationality')
+- Create variables:
+  - Age group (decades)
+  - nationality.native (from country.of.birth); binary ='native' when person resides in country of birth, ='non.native' otherwise
+  - language.native (from language); binary ='english', ='other' otherwise
 - Make sure q.id and q.num don't get exported with final tables
+- Political.affiliation : standardize 'Dont know' & 'Don't Know'; add (UK) and (US) to all labels
 
 
 EXPORT
