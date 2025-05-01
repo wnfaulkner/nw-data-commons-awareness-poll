@@ -26,6 +26,12 @@
     library(janitor)
     library(lubridate)
     library(openxlsx)
+    library(MASS)         # For polr (proportional odds logistic regression)
+    library(ggplot2)
+    library(ggpubr)       # For statistical plots
+    library(psych)        # For descriptive stats
+    library(Hmisc)        # For rcorr if needed
+
   
   # SECTION CLOCKING
     section0.duration <- Sys.time() - section0.starttime
@@ -73,7 +79,7 @@
   
   # REMOVE EXTRA COLUMNS NOT GOING TO USE
     data.tb %<>%
-      select(-started.at, -reviewed.at, -archived.at, -completion.code, -total.approvals, -status, -submission.id)
+      dplyr::select(-started.at, -reviewed.at, -archived.at, -completion.code, -total.approvals, -status, -submission.id)
 
   # RECODE INFOGRAPHIC
     data.tb %<>%
@@ -87,7 +93,7 @@
     #Step 1: Create a lookup table that connects var.name (from data.tb) to q.theme (in response.options.tb)
     recode.mapping.tb <- questions.tb %>%
       filter(q.theme %in% unique(response.options.tb$q.theme)) %>%
-      select(var.name, q.theme)
+      dplyr::select(var.name, q.theme)
 
     #Step 2: Recode each variable based on the response.options.tb
     recode_from_theme <- function(varname, theme) {
@@ -96,7 +102,7 @@
       # Get response options for this theme
       options.tb <- response.options.tb %>%
         filter(q.theme == theme) %>%
-        select(response.option, response.text)
+        dplyr::select(response.option, response.text)
       
       if (nrow(options.tb) == 0) return(NULL)
 
@@ -141,11 +147,11 @@
       # 2. Identify columns for the given theme
       theme.vars <- questions_table %>%
         filter(q.theme == theme) %>%
-        select(q.theme, var.name, q.num)  # keep both var name and q.num for later join
+        dplyr::select(q.theme, var.name, q.num)  # keep both var name and q.num for later join
       
       # 3. Reshape data from wide to long
       long.tb <- data_table %>%
-        select(all_of(id.vars), all_of(theme.vars$var.name)) %>%
+        dplyr::select(all_of(id.vars), all_of(theme.vars$var.name)) %>%
         pivot_longer(
           cols = -all_of(id.vars),
           names_to = "category",
@@ -207,7 +213,95 @@
       response_options_table = response.options.tb
     )
 
+# 3-ANALYSIS, STATISTICAL TESTS -------------------------------------------------------------------------------
   
+  # DEFINE FUNCTION FOR CONVERTING CHARACTER VARIABLES TO FACTORS
+  convert_character_var_to_factor <- function(x) {
+    factor(
+      na_if(x, "0. not participating"),
+      levels = c(
+        "1. never heard",
+        "2. heard a little",
+        "3. know something",
+        "4. know a lot"
+      ),
+      ordered = TRUE
+    )
+  }
+
+  # NUCLEAR WINTER AWARENESS
+
+    data.awareness.tb <- data.tb %>%
+    filter(
+      !is.na(nw.awareness.1980s)
+    ) %>%
+    mutate(across(
+      c(
+        nw.awareness.1980s,
+        nw.awareness.recent.media,
+        nw.awareness.recent.academic
+      ),
+      convert_character_var_to_factor
+    )) 
+
+    # Data Summaries
+    cor.test(as.numeric(data.awareness.tb$nw.awareness.1980s), data.awareness.tb$age, method = "spearman")
+
+    # ggplot(data.awareness.tb %>% filter(!is.na(nw.awareness.1980s)), aes(x = sex, y = nw.awareness.1980s)) +
+    #   geom_jitter(width = 0.3, height = 0.1) +
+    #   stat_smooth(method = "loess") +
+    #   labs(title = "Awareness vs Sex")
+
+    # awareness_colors <- c(
+    #   "never heard"     = "#d4f0ff",  # lightest
+    #   "heard a little"  = "#88ccee",
+    #   "know something"  = "#4477aa",
+    #   "know a lot"      = "#223366"   # darkest
+    # )
+
+    # ggplot(data.awareness.tb %>% filter(!is.na(nw.awareness.1980s)),
+    #   aes(x = sex, fill = nw.awareness.1980s)) +
+    #   geom_bar(position = "fill") +
+    #   scale_y_continuous(labels = percent_format()) +
+    #   scale_fill_manual(values = awareness_colors) +
+    #   labs(
+    #     title = "Awareness of Nuclear Weapons in the 1980s by Sex",
+    #     x = "Sex",
+    #     y = "Proportion of Respondents",
+    #     fill = "Awareness Level"
+    #   ) +
+    #   theme_minimal() +
+    #   theme(
+    #     text = element_text(size = 14),
+    #     legend.position = "right"
+    #   )
+
+    # Bivariate Statistical Tests
+      kruskal.test(as.numeric(nw.awareness.1980s) ~ sex, data = data.awareness.tb)
+      kruskal.test(as.numeric(nw.awareness.1980s) ~ ethnicity, data = data.awareness.tb)
+      
+
+    # Regression
+    model <- polr(
+      nw.awareness.1980s ~ sex + age + ethnicity + political_affiliation +
+      nationality + employment_status + language + country_of_residence,
+      data = data.awareness.tb, Hess = TRUE)
+
+    summary(model)
+
+    ctable <- coef(summary(model))
+    pvals <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+    cbind(ctable, "p value" = pvals)
+
+    ggplot(data.awareness.tb, aes(x = awareness, fill = sex)) +
+      geom_bar(position = "fill") +
+      facet_wrap(~nationality) +
+      labs(title = "Awareness Distribution by Sex and Nationality")
+    ggplot(data.awareness.tb, aes(x = awareness, y = age)) +
+      geom_boxplot() +
+      labs(title = "Age by Awareness Level")
+
+
 # 3-EXPORT -------------------------------------------------------------------------------
   
   # CREATE FINAL LIST OF CLEANED & REFORMATTED TABLES FOR EXPORT

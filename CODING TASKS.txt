@@ -14,6 +14,9 @@ CLEANING
 - Make sure q.id and q.num don't get exported with final tables
 - Political.affiliation : standardize 'Dont know' & 'Don't Know'; add (UK) and (US) to all labels
 
+ANALYSIS & STATISTICAL TESTS
+  - 
+
 
 EXPORT
   -- Export questions (& response options?) table(s)
