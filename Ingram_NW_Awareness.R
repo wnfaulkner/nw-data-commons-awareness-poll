@@ -283,8 +283,8 @@
 
     # Regression
     model <- polr(
-      nw.awareness.1980s ~ sex + age + ethnicity + political_affiliation +
-      nationality + employment_status + language + country_of_residence,
+      nw.awareness.1980s ~ sex + age + ethnicity + political.affiliation +
+      nationality + employment.status + student.status + language,
       data = data.awareness.tb, Hess = TRUE)
 
     summary(model)
