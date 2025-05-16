@@ -20,7 +20,7 @@
     library(wnf.utils)
     LoadCommonPackages()
     library(googledrive)
-    drive_auth(email = "william@fluxrme.com")
+    drive_auth(cache = "~/.R/gargle_cache", email = "william@fluxrme.com")
     library(purrr)
     library(ncdf4)
     library(janitor)
@@ -74,8 +74,8 @@
     )
 
     id.varnames <- questions.tb %>%
-      filter(var.category == "id.var") %>%
-      pull(var.name)
+      dplyr::filter(var.category == "id.var") %>%
+      dplyr::pull(var.name)
   
   # REMOVE EXTRA COLUMNS NOT GOING TO USE
     data.tb %<>%
@@ -83,7 +83,7 @@
 
   # RECODE INFOGRAPHIC
     data.tb %<>%
-      mutate(shown.infographic = case_when(
+      mutate(shown.infographic = dplyr::case_when(
         shown.infographic == "A" ~ "shown infographic",
         shown.infographic == "B" ~ "no infographic",
       ))
@@ -92,7 +92,7 @@
 
     #Step 1: Create a lookup table that connects var.name (from data.tb) to q.theme (in response.options.tb)
     recode.mapping.tb <- questions.tb %>%
-      filter(q.theme %in% unique(response.options.tb$q.theme)) %>%
+      dplyr::filter(q.theme %in% unique(response.options.tb$q.theme)) %>%
       dplyr::select(var.name, q.theme)
 
     #Step 2: Recode each variable based on the response.options.tb
@@ -101,7 +101,7 @@
       
       # Get response options for this theme
       options.tb <- response.options.tb %>%
-        filter(q.theme == theme) %>%
+        dplyr::filter(q.theme == theme) %>%
         dplyr::select(response.option, response.text)
       
       if (nrow(options.tb) == 0) return(NULL)
@@ -141,18 +141,18 @@
     ReshapeThemeTable <- function(theme, data_table, questions_table, response_options_table, drop_not_participating = FALSE) {  
       # 1. Identify ID vars
       id.vars <- questions_table %>%
-        filter(var.category == "id.var") %>%
-        pull(var.name)
+        dplyr::filter(var.category == "id.var") %>%
+        dplyr::pull(var.name)
       
       # 2. Identify columns for the given theme
       theme.vars <- questions_table %>%
-        filter(q.theme == theme) %>%
+        dplyr::filter(q.theme == theme) %>%
         dplyr::select(q.theme, var.name, q.num)  # keep both var name and q.num for later join
       
       # 3. Reshape data from wide to long
       long.tb <- data_table %>%
         dplyr::select(all_of(id.vars), all_of(theme.vars$var.name)) %>%
-        pivot_longer(
+        tidyr::pivot_longer(
           cols = -all_of(id.vars),
           names_to = "category",
           values_to = "value"
@@ -173,7 +173,7 @@
       # 7. Optionally drop rows that were non-participants (after conversion to NA)
       if (drop_not_participating) {
         long.tb <- long.tb %>%
-          filter(shown.infographic == "shown infographic")
+          dplyr::filter(shown.infographic == "shown infographic")
       }
 
       return(long.tb)
@@ -232,7 +232,7 @@
   # NUCLEAR WINTER AWARENESS
 
     data.awareness.tb <- data.tb %>%
-    filter(
+    dplyr::filter(
       !is.na(nw.awareness.1980s)
     ) %>%
     mutate(across(
@@ -247,7 +247,7 @@
     # Data Summaries
     cor.test(as.numeric(data.awareness.tb$nw.awareness.1980s), data.awareness.tb$age, method = "spearman")
 
-    # ggplot(data.awareness.tb %>% filter(!is.na(nw.awareness.1980s)), aes(x = sex, y = nw.awareness.1980s)) +
+    # ggplot(data.awareness.tb %>% dplyr::filter(!is.na(nw.awareness.1980s)), aes(x = sex, y = nw.awareness.1980s)) +
     #   geom_jitter(width = 0.3, height = 0.1) +
     #   stat_smooth(method = "loess") +
     #   labs(title = "Awareness vs Sex")
@@ -259,7 +259,7 @@
     #   "know a lot"      = "#223366"   # darkest
     # )
 
-    # ggplot(data.awareness.tb %>% filter(!is.na(nw.awareness.1980s)),
+    # ggplot(data.awareness.tb %>% dplyr::filter(!is.na(nw.awareness.1980s)),
     #   aes(x = sex, fill = nw.awareness.1980s)) +
     #   geom_bar(position = "fill") +
     #   scale_y_continuous(labels = percent_format()) +
