@@ -31,6 +31,7 @@
     library(ggpubr)       # For statistical plots
     library(psych)        # For descriptive stats
     library(Hmisc)        # For rcorr if needed
+    library(broom)
 
   
   # SECTION CLOCKING
@@ -282,12 +283,44 @@
       
 
     # Regression
+    data.awareness.polr.tb <- data.awareness.tb %>%
+      filter(sex %in% c("Female","Male")) %>%
+      mutate(sex = relevel(factor(sex), ref = "Male"))
+      
     model <- polr(
       nw.awareness.1980s ~ sex + age + ethnicity + political.affiliation +
       nationality + employment.status + student.status + language,
-      data = data.awareness.tb, Hess = TRUE)
+      data = data.awareness.polr.tb, Hess = TRUE
+    )
 
     summary(model)
+
+    coef_df <- broom::tidy(model) %>%
+    filter(term == "sexFemale")  # focus on just the 'sex' coefficient
+
+    ggplot(coef_df, aes(x = term, y = estimate)) + # Plot
+      geom_point(size = 3) +
+      geom_errorbar(aes(ymin = estimate - std.error * 1.96,
+                        ymax = estimate + std.error * 1.96),
+                    width = 0.2) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+      labs(
+        title = "Effect of Sex (Female vs Male) on Awareness",
+        x = "",
+        y = "Log-Odds Coefficient"
+      ) +
+      theme_minimal(base_size = 14)
+
+
+
+
+
+
+
+
+
+
+
 
     ctable <- coef(summary(model))
     pvals <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
