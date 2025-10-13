@@ -25,7 +25,7 @@
     #library(ncdf4)
     library(janitor)
     library(lubridate)
-    #library(openxlsx)
+    library(openxlsx2)
     #library(MASS)         # For polr (proportional odds logistic regression)
     #library(ggplot2)
     #library(ggpubr)       # For statistical plots
@@ -184,17 +184,22 @@
       relocate(political.affiliation, .after = sex)
 
   # RESHAPE - DEFINE ABSTRACTED FUNCTION
-    ReshapeThemeTable <- function(theme, data_table, questions_table, response_options_table, drop_not_participating = FALSE) {  
+    ReshapeThemeTable <- function(theme, data_table, questions_table, response_options_table, drop_not_participating = FALSE, extra_id_vars = NULL) {
       # 1. Identify ID vars
       id.vars <- questions_table %>%
         dplyr::filter(var.category == "id.var") %>%
         dplyr::pull(var.name)
-      
+
+      # 1b. Add extra derived ID variables if provided
+      if (!is.null(extra_id_vars)) {
+        id.vars <- c(id.vars, extra_id_vars)
+      }
+
       # 2. Identify columns for the given theme
       theme.vars <- questions_table %>%
         dplyr::filter(q.theme == theme) %>%
         dplyr::select(q.theme, var.name, q.num)  # keep both var name and q.num for later join
-      
+
       # 3. Reshape data from wide to long
       long.tb <- data_table %>%
         dplyr::select(all_of(id.vars), all_of(theme.vars$var.name)) %>%
@@ -207,23 +212,38 @@
       # 4. Attach q.theme and q.num to each category using questions.tb
       long.tb <- long.tb %>%
         left_join(theme.vars, by = c("category" = "var.name"))
-      
+
       # 5. Rename value to value.text
       long.tb <- long.tb %>%
         rename(value.text = value)
 
-      # 6. Convert "0. not participating" → NA
+      # 6. Join response.option (numerical value) from response_options_table
+      response.lookup <- response_options_table %>%
+        dplyr::filter(q.theme == theme) %>%
+        dplyr::select(response.text, response.option)
+
       long.tb <- long.tb %>%
-        mutate(value.text = ifelse(value.text == "0. not participating", NA, value.text))
-      
-      # 7. Optionally drop rows that were non-participants (after conversion to NA)
+        left_join(response.lookup, by = c("value.text" = "response.text")) %>%
+        rename(value.num = response.option)
+
+      # 7. Convert "0. not participating" → NA for both text and numeric values
+      long.tb <- long.tb %>%
+        mutate(
+          value.text = ifelse(value.text == "0. not participating", NA, value.text),
+          value.num = ifelse(value.num == 0, NA_real_, as.numeric(value.num))
+        )
+
+      # 8. Optionally drop rows that were non-participants (after conversion to NA)
       if (drop_not_participating) {
         long.tb <- long.tb %>%
-          dplyr::filter(shown.infographic == "shown infographic")
+          dplyr::filter(!is.na(value.num))
       }
 
       return(long.tb)
     }
+
+  # DEFINE EXTRA ID VARIABLES (derived variables to include in reshaped tables)
+    extra.id.vars <- c("age.group", "nationality.native", "language.native")
 
   # RESHAPE - AWARENESS
     awareness.tb <- ReshapeThemeTable(
@@ -231,8 +251,13 @@
       data_table = data.tb,
       questions_table = questions.tb,
       response_options_table = response.options.tb,
-      drop_not_participating = TRUE
-    )
+      drop_not_participating = TRUE,
+      extra_id_vars = extra.id.vars
+    )  %>%
+    relocate(age.group, .after = age) %>%
+    relocate(nationality.native, .after = country.of.residence) %>%
+    relocate(language.native, .after = language) %>%
+    relocate(political.affiliation, .after = sex)
 
   # RESHAPE - CASUALTY CAUSES
     casualty.causes.tb <- ReshapeThemeTable(
@@ -240,24 +265,39 @@
       data_table = data.tb,
       questions_table = questions.tb,
       response_options_table = response.options.tb,
-      drop_not_participating = TRUE
-    )
+      drop_not_participating = TRUE,
+      extra_id_vars = extra.id.vars
+    ) %>%
+    relocate(age.group, .after = age) %>%
+    relocate(nationality.native, .after = country.of.residence) %>%
+    relocate(language.native, .after = language) %>%
+    relocate(political.affiliation, .after = sex)
 
   # RESHAPE - SUPPORT REACTION
     support.reaction.tb <- ReshapeThemeTable(
       theme = "support.reaction",
       data_table = data.tb,
       questions_table = questions.tb,
-      response_options_table = response.options.tb
-    )
+      response_options_table = response.options.tb,
+      extra_id_vars = extra.id.vars
+    ) %>%
+    relocate(age.group, .after = age) %>%
+    relocate(nationality.native, .after = country.of.residence) %>%
+    relocate(language.native, .after = language) %>%
+    relocate(political.affiliation, .after = sex)
 
   # RESHAPE - DECISION FACTORS
     decision.factors.tb <- ReshapeThemeTable(
       theme = "decision.factors",
       data_table = data.tb,
       questions_table = questions.tb,
-      response_options_table = response.options.tb
-    )
+      response_options_table = response.options.tb,
+      extra_id_vars = extra.id.vars
+    ) %>%
+    relocate(age.group, .after = age) %>%
+    relocate(nationality.native, .after = country.of.residence) %>%
+    relocate(language.native, .after = language) %>%
+    relocate(political.affiliation, .after = sex)
 
   # CREATE FINAL LIST OF CLEANED & REFORMATTED TABLES FOR EXPORT
     
@@ -293,130 +333,9 @@
     
     names(export.ls) <- clean_table_names[clean_object_names %in% ls()]
 
+
+# 3-EXPORT ------------------------------------------------------------------------------- 
   
-  
-# 3-ANALYSIS, STATISTICAL TESTS -------------------------------------------------------------------------------
-  
-  # DEFINE FUNCTION FOR CONVERTING CHARACTER VARIABLES TO FACTORS
-  convert_character_var_to_factor <- function(x) {
-    factor(
-      na_if(x, "0. not participating"),
-      levels = c(
-        "1. never heard",
-        "2. heard a little",
-        "3. know something",
-        "4. know a lot"
-      ),
-      ordered = TRUE
-    )
-  }
-
-  # NUCLEAR WINTER AWARENESS
-
-    data.awareness.tb <- data.tb %>%
-    dplyr::filter(
-      !is.na(nw.awareness.1980s)
-    ) %>%
-    mutate(across(
-      c(
-        nw.awareness.1980s,
-        nw.awareness.recent.media,
-        nw.awareness.recent.academic
-      ),
-      convert_character_var_to_factor
-    )) 
-
-    # Data Summaries
-    cor.test(as.numeric(data.awareness.tb$nw.awareness.1980s), data.awareness.tb$age, method = "spearman")
-
-    # ggplot(data.awareness.tb %>% dplyr::filter(!is.na(nw.awareness.1980s)), aes(x = sex, y = nw.awareness.1980s)) +
-    #   geom_jitter(width = 0.3, height = 0.1) +
-    #   stat_smooth(method = "loess") +
-    #   labs(title = "Awareness vs Sex")
-
-    # awareness_colors <- c(
-    #   "never heard"     = "#d4f0ff",  # lightest
-    #   "heard a little"  = "#88ccee",
-    #   "know something"  = "#4477aa",
-    #   "know a lot"      = "#223366"   # darkest
-    # )
-
-    # ggplot(data.awareness.tb %>% dplyr::filter(!is.na(nw.awareness.1980s)),
-    #   aes(x = sex, fill = nw.awareness.1980s)) +
-    #   geom_bar(position = "fill") +
-    #   scale_y_continuous(labels = percent_format()) +
-    #   scale_fill_manual(values = awareness_colors) +
-    #   labs(
-    #     title = "Awareness of Nuclear Weapons in the 1980s by Sex",
-    #     x = "Sex",
-    #     y = "Proportion of Respondents",
-    #     fill = "Awareness Level"
-    #   ) +
-    #   theme_minimal() +
-    #   theme(
-    #     text = element_text(size = 14),
-    #     legend.position = "right"
-    #   )
-
-    # Bivariate Statistical Tests
-      kruskal.test(as.numeric(nw.awareness.1980s) ~ sex, data = data.awareness.tb)
-      kruskal.test(as.numeric(nw.awareness.1980s) ~ ethnicity, data = data.awareness.tb)
-      
-
-    # Regression
-    data.awareness.polr.tb <- data.awareness.tb %>%
-      filter(sex %in% c("Female","Male")) %>%
-      mutate(sex = relevel(factor(sex), ref = "Male"))
-      
-    model <- polr(
-      nw.awareness.1980s ~ sex + age + ethnicity + political.affiliation +
-      nationality + employment.status + student.status + language,
-      data = data.awareness.polr.tb, Hess = TRUE
-    )
-
-    summary(model)
-
-    coef_df <- broom::tidy(model) %>%
-    filter(term == "sexFemale")  # focus on just the 'sex' coefficient
-
-    ggplot(coef_df, aes(x = term, y = estimate)) + # Plot
-      geom_point(size = 3) +
-      geom_errorbar(aes(ymin = estimate - std.error * 1.96,
-                        ymax = estimate + std.error * 1.96),
-                    width = 0.2) +
-      geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
-      labs(
-        title = "Effect of Sex (Female vs Male) on Awareness",
-        x = "",
-        y = "Log-Odds Coefficient"
-      ) +
-      theme_minimal(base_size = 14)
-
-
-
-
-
-
-
-
-
-
-
-
-    ctable <- coef(summary(model))
-    pvals <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
-    cbind(ctable, "p value" = pvals)
-
-    ggplot(data.awareness.tb, aes(x = awareness, fill = sex)) +
-      geom_bar(position = "fill") +
-      facet_wrap(~nationality) +
-      labs(title = "Awareness Distribution by Sex and Nationality")
-    ggplot(data.awareness.tb, aes(x = awareness, y = age)) +
-      geom_boxplot() +
-      labs(title = "Age by Awareness Level")
-
-
-# 3-EXPORT -------------------------------------------------------------------------------  
   # DEFINE & CREATE OUTPUT DIRECTORY
     
     #setwd(paste(wd, "\\2. Reformatted Source Data", sep=""))
@@ -455,26 +374,192 @@
     
   # WRITE TABLES INTO SINGLE EXCEL FILE IN OUTPUT DIRECTORY
     
-    output.file.path <- 
+    output.file.path <-
       paste(output.dir, "Reformatted Data_Analysis_",Sys.Date(),".xlsx", sep = "") %>%
       file.path(.)
-      
-    wb <- createWorkbook()
-    
+
+    wb <- wb_workbook()
+
     for (i in seq_along(export.ls)) {
       sheet_name <- names(export.ls)[i]  # Get the name of the list element (if named)
       if (is.null(sheet_name) || sheet_name == "") {
         sheet_name <- paste0("Sheet", i)  # Assign default sheet names if missing
       }
-      
-      addWorksheet(wb, sheet_name)  # Create a new sheet
-      writeData(wb, sheet = sheet_name, export.ls[[i]])  # Write data
+
+      wb$add_worksheet(sheet_name)  # Create a new sheet
+      wb$add_data(sheet = sheet_name, x = export.ls[[i]])  # Write data
     }
-    
-    saveWorkbook(wb, output.file.path, overwrite = TRUE)
-    
+
+    wb$save(output.file.path, overwrite = TRUE)
+
     cat("Excel file successfully saved at:", output.file.path, "\n") # Print confirmation
 
   # CODE CLOCKING
     code.duration <- Sys.time() - sections.all.starttime
     code.duration
+
+
+# 4-ANALYSIS, STATISTICAL TESTS -------------------------------------------------------------------------------
+  
+  # DEFINE FUNCTION FOR CONVERTING CHARACTER VARIABLES TO FACTORS
+  convert_character_var_to_factor <- function(x) {
+    factor(
+      na_if(x, "0. not participating"),
+      levels = c(
+        "1. never heard",
+        "2. heard a little",
+        "3. know something",
+        "4. know a lot"
+      ),
+      ordered = TRUE
+    )
+  }
+
+  # NUCLEAR WINTER AWARENESS
+
+    data.awareness.tb <- data.tb %>%
+    dplyr::filter(
+      !is.na(nw.awareness.1980s)
+    ) %>%
+    mutate(across(
+      c(
+        nw.awareness.1980s,
+        nw.awareness.recent.media,
+        nw.awareness.recent.academic
+      ),
+      convert_character_var_to_factor
+    )) 
+
+    # Data Summaries
+
+      # Awareness vs Age (numeric)
+        cor.test(
+          as.numeric(awareness.tb$value.num), 
+          awareness.tb$age, 
+          method = "spearman",
+          exact = FALSE
+        )
+
+        cor.test(
+          as.numeric(data.awareness.tb$nw.awareness.1980s), 
+          data.awareness.tb$age, 
+          method = "spearman",
+          exact = FALSE
+        )
+      
+      cor.test(
+          as.numeric(data.awareness.tb$nw.awareness.recent.media), 
+          data.awareness.tb$age, 
+          method = "spearman",
+          exact = FALSE
+        )
+
+      cor.test(
+        as.numeric(data.awareness.tb$nw.awareness.recent.academic), 
+        data.awareness.tb$age, 
+        method = "spearman",
+        exact = FALSE
+      )
+
+
+    # ggplot(data.awareness.tb %>% dplyr::filter(!is.na(nw.awareness.1980s)), aes(x = sex, y = nw.awareness.1980s)) +
+    #   geom_jitter(width = 0.3, height = 0.1) +
+    #   stat_smooth(method = "loess") +
+    #   labs(title = "Awareness vs Sex")
+
+    # awareness_colors <- c(
+    #   "never heard"     = "#d4f0ff",  # lightest
+    #   "heard a little"  = "#88ccee",
+    #   "know something"  = "#4477aa",
+    #   "know a lot"      = "#223366"   # darkest
+    # )
+
+    # ggplot(data.awareness.tb %>% dplyr::filter(!is.na(nw.awareness.1980s)),
+    #   aes(x = sex, fill = nw.awareness.1980s)) +
+    #   geom_bar(position = "fill") +
+    #   scale_y_continuous(labels = percent_format()) +
+    #   scale_fill_manual(values = awareness_colors) +
+    #   labs(
+    #     title = "Awareness of Nuclear Weapons in the 1980s by Sex",
+    #     x = "Sex",
+    #     y = "Proportion of Respondents",
+    #     fill = "Awareness Level"
+    #   ) +
+    #   theme_minimal() +
+    #   theme(
+    #     text = element_text(size = 14),
+    #     legend.position = "right"
+    #   )
+
+    # Bivariate Statistical Tests
+      awareness.tb %>%
+        filter(category == "nw.awareness.1980s") %>%
+        filter(sex %in% c("Female", "Male")) %>%
+        group_by(sex) %>%
+        summarize(
+          median_awareness = median(as.numeric(nw.awareness.1980s), na.rm = TRUE),
+          mean_awareness = mean(as.numeric(nw.awareness.1980s), na.rm = TRUE)
+        )
+      kruskal.test(as.numeric(nw.awareness.1980s) ~ sex, data = data.awareness.tb %>% filter(sex %in% c("Female","Male")))
+      
+      data.awareness.tb %>%
+        filter(!is.na(ethnicity)) %>%
+        group_by(ethnicity) %>%
+        summarize(
+          median_awareness = median(as.numeric(nw.awareness.1980s), na.rm = TRUE),
+          mean_awareness = mean(as.numeric(nw.awareness.1980s), na.rm = TRUE)
+        )
+      kruskal.test(as.numeric(nw.awareness.1980s) ~ ethnicity, data = data.awareness.tb %>% filter(!is.na(ethnicity)))
+      
+      
+      kruskal.test(as.numeric(nw.awareness.recent.media) ~ sex, data = data.awareness.tb)
+      
+      
+      kruskal.test(as.numeric(nw.awareness.recent.media) ~ ethnicity, data = data.awareness.tb)
+      
+      
+      kruskal.test(as.numeric(nw.awareness.recent.academic) ~ sex, data = data.awareness.tb)
+      
+      
+      kruskal.test(as.numeric(nw.awareness.recent.academic) ~ ethnicity, data = data.awareness.tb)
+
+    # Regression
+    data.awareness.polr.tb <- data.awareness.tb %>%
+      filter(sex %in% c("Female","Male")) %>%
+      mutate(sex = relevel(factor(sex), ref = "Male"))
+      
+    model <- polr(
+      nw.awareness.1980s ~ sex + age + ethnicity + political.affiliation +
+      nationality + employment.status + student.status + language,
+      data = data.awareness.polr.tb, Hess = TRUE
+    )
+
+    summary(model)
+
+    coef_df <- broom::tidy(model) %>%
+    filter(term == "sexFemale")  # focus on just the 'sex' coefficient
+
+    ggplot(coef_df, aes(x = term, y = estimate)) + # Plot
+      geom_point(size = 3) +
+      geom_errorbar(aes(ymin = estimate - std.error * 1.96,
+                        ymax = estimate + std.error * 1.96),
+                    width = 0.2) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "gray40") +
+      labs(
+        title = "Effect of Sex (Female vs Male) on Awareness",
+        x = "",
+        y = "Log-Odds Coefficient"
+      ) +
+      theme_minimal(base_size = 14)
+
+    ctable <- coef(summary(model))
+    pvals <- pnorm(abs(ctable[, "t value"]), lower.tail = FALSE) * 2
+    cbind(ctable, "p value" = pvals)
+
+    ggplot(data.awareness.tb, aes(x = awareness, fill = sex)) +
+      geom_bar(position = "fill") +
+      facet_wrap(~nationality) +
+      labs(title = "Awareness Distribution by Sex and Nationality")
+    ggplot(data.awareness.tb, aes(x = awareness, y = age)) +
+      geom_boxplot() +
+      labs(title = "Age by Awareness Level")
