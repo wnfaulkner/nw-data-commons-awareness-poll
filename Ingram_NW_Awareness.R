@@ -22,16 +22,16 @@
     library(googledrive)
     drive_auth(cache = "~/.R/gargle_cache", email = "william@fluxrme.com")
     library(purrr)
-    library(ncdf4)
+    #library(ncdf4)
     library(janitor)
     library(lubridate)
-    library(openxlsx)
-    library(MASS)         # For polr (proportional odds logistic regression)
-    library(ggplot2)
-    library(ggpubr)       # For statistical plots
-    library(psych)        # For descriptive stats
-    library(Hmisc)        # For rcorr if needed
-    library(broom)
+    #library(openxlsx)
+    #library(MASS)         # For polr (proportional odds logistic regression)
+    #library(ggplot2)
+    #library(ggpubr)       # For statistical plots
+    #library(psych)        # For descriptive stats
+    #library(Hmisc)        # For rcorr if needed
+    #library(broom)
 
   
   # SECTION CLOCKING
@@ -80,7 +80,10 @@
   
   # REMOVE EXTRA COLUMNS NOT GOING TO USE
     data.tb %<>%
-      dplyr::select(-started.at, -reviewed.at, -archived.at, -completion.code, -total.approvals, -status, -submission.id)
+      dplyr::select(
+        -started.at, -reviewed.at, -archived.at, -completion.code, -total.approvals, -status, -submission.id,
+        -nationality
+      )
 
   # RECODE INFOGRAPHIC
     data.tb %<>%
@@ -132,11 +135,53 @@
     #   }
     # )
 
-    data.tb <- data.tb %>%
-      mutate(across(
-        everything(),
-        ~ifelse(.x == "0. not participating", NA, .x)
-      ))
+    # data.tb <- data.tb %>%
+    #   mutate(across(
+    #     everything(),
+    #     ~ifelse(.x == "0. not participating", NA, .x)
+    #   ))
+  # RECODE POLITICAL AFFILIATION & ADD USEFUL VARIABLES -----
+    data.tb %<>%
+      mutate(
+        political.affiliation = dplyr::case_when(
+          political.affiliation %in% c("Don't know", "Dont know") ~ "Don't Know",
+          political.affiliation %in% c("Other") ~ "Other",
+          political.affiliation %in% c("Would not vote") ~ "Would not vote",
+          political.affiliation %in% c("Democrat") ~ "USA-Democrat",
+          political.affiliation %in% c("Republican") ~ "USA-Republican",
+          political.affiliation %in% c("Independent","independent") ~ "USA-Independent",
+          political.affiliation %in% c("Labour") ~ "UK-Labour",
+          political.affiliation %in% c("Conservative") ~ "UK-Conservative",
+          political.affiliation %in% c("Green") ~ "UK-Green",
+          political.affiliation %in% c("SNP") ~ "UK-SNP",
+          political.affiliation %in% c("Plaid Cymru") ~ "UK-Plaid Cymru",
+          TRUE ~ political.affiliation
+        )
+      ) %>%
+      mutate(
+        age.group = dplyr::case_when(
+          age >= 18 & age <= 29 ~ "18-29",
+          age >= 30 & age <= 39 ~ "30-39",
+          age >= 40 & age <= 49 ~ "40-49",
+          age >= 50 & age <= 64 ~ "50-64",
+          age >= 65 ~ "65+",
+          TRUE ~ NA_character_   # Handles missing or out-of-range ages
+        ),
+        nationality.native = dplyr::case_when(
+          country.of.birth == country.of.residence ~ "native",
+          !is.na(country.of.birth) & !is.na(country.of.residence) & country.of.birth != country.of.residence ~ "non.native",
+          TRUE ~ NA_character_
+        ),
+        language.native = dplyr::case_when(
+          language == "English" ~ "english",
+          !is.na(language) & language != "English" ~ "other",
+          TRUE ~ NA_character_
+        )
+      ) %>%
+      relocate(age.group, .after = age) %>%
+      relocate(nationality.native, .after = country.of.residence) %>%
+      relocate(language.native, .after = language) %>%
+      relocate(political.affiliation, .after = sex)
 
   # RESHAPE - DEFINE ABSTRACTED FUNCTION
     ReshapeThemeTable <- function(theme, data_table, questions_table, response_options_table, drop_not_participating = FALSE) {  
@@ -214,6 +259,42 @@
       response_options_table = response.options.tb
     )
 
+  # CREATE FINAL LIST OF CLEANED & REFORMATTED TABLES FOR EXPORT
+    
+    clean_object_names <- 
+      c(
+        "data.tb",
+        "awareness.tb",
+        "casualty.causes.tb",
+        "support.reaction.tb",
+        "decision.factors.tb",
+        "questions.tb"
+      )
+    
+    clean_table_names <- 
+      c(
+        "1.wide.data",
+        "2.awareness",
+        "3.casualty.causes",
+        "4.support.reaction",
+        "5.decision.factors",
+        "questions"
+      )
+    
+    export.ls <- 
+      lapply(
+        clean_object_names, 
+        function(x) {
+          if (exists(x)) get(x) else NULL
+        }
+      ) %>%
+      purrr::compact() %>% # Remove NULL entries for non-existent tibbles
+      lapply(., function(x){x %>% select(-any_of(c("q.num", "q.id","q.theme")))}) # Remove q.num and q.id if they exist in any table
+    
+    names(export.ls) <- clean_table_names[clean_object_names %in% ls()]
+
+  
+  
 # 3-ANALYSIS, STATISTICAL TESTS -------------------------------------------------------------------------------
   
   # DEFINE FUNCTION FOR CONVERTING CHARACTER VARIABLES TO FACTORS
@@ -335,41 +416,7 @@
       labs(title = "Age by Awareness Level")
 
 
-# 3-EXPORT -------------------------------------------------------------------------------
-  
-  # CREATE FINAL LIST OF CLEANED & REFORMATTED TABLES FOR EXPORT
-    
-    clean_object_names <- 
-      c(
-        "data.tb",
-        "awareness.tb",
-        "casualty.causes.tb",
-        "support.reaction.tb",
-        "decision.factors.tb",
-        "questions.tb"
-      )
-    
-    clean_table_names <- 
-      c(
-        "1.wide.data",
-        "2.awareness",
-        "3.casualty.causes",
-        "4.support.reaction",
-        "5.decision.factors",
-        "questions"
-      )
-    
-    export.ls <- 
-      lapply(
-        clean_object_names, 
-        function(x) {
-          if (exists(x)) get(x) else NULL
-        }
-      ) %>%
-      purrr::compact() # Remove NULL entries for non-existent tibbles
-    
-    names(export.ls) <- clean_table_names[clean_object_names %in% ls()]
-  
+# 3-EXPORT -------------------------------------------------------------------------------  
   # DEFINE & CREATE OUTPUT DIRECTORY
     
     #setwd(paste(wd, "\\2. Reformatted Source Data", sep=""))
