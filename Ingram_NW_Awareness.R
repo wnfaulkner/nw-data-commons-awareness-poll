@@ -403,7 +403,10 @@
   }
 
 # 4-ANALYSIS, STATISTICAL TESTS -------------------------------------------------------------------------------
-  
+
+run.bivariate.tests <- FALSE
+
+if(run.bivariate.tests){  
   # DEFINE FUNCTION FOR CONVERTING CHARACTER VARIABLES TO FACTORS
     convert_character_var_to_factor <- function(x) {
       factor(
@@ -1145,7 +1148,7 @@
     # Combine all rows into single tibble
     bivariate.results.tb <- bind_rows(bivariate_results_list)
 
-# EXPORT BIVARIATE RESULTS -------------------------------------------
+  # EXPORT BIVARIATE RESULTS -------------------------------------------
   export.bivariate.results <- TRUE
 
   if (export.bivariate.results) {
@@ -1186,3 +1189,110 @@
 
     cat("Bivariate test results saved at:", bv.output.file.path, "\n")
   }
+}
+
+
+# 5-REGRESSIONS -------------------------------------------------------------------------------
+
+  # STEP 1: SINGLE REGRESSION EXAMPLE
+  
+    awareness_aggregated.tb <- awareness.tb %>% # Calculate mean awareness score per respondent
+      group_by(across(all_of(id.varnames))) %>%
+      summarize(
+        mean_awareness = mean(value.num, na.rm = TRUE),
+        n_responses = n(),
+        .groups = "drop"
+      )
+
+    # Define exclusions and base categories for all variables
+      var_config <- list(
+        mean_awareness = list(exclude = c(), base = NA),
+        age = list(exclude = c(), base = NA),
+        sex = list(exclude = c(), base = "Male"),
+        ethnicity = list(exclude = c(), base = "White"),
+        nationality.native = list(exclude = c(), base = NA),
+        language.native = list(exclude = c(), base = NA),
+        student.status = list(exclude = c(), base = NA),
+        employment.status = list(exclude = c(), base = NA),
+        country.of.residence = list(exclude = c("United Kingdom"), base = NA),
+        political.affiliation = list(exclude = c("Don't Know", "Other", "Would not vote"), base = "USA-Democrat")
+      )
+
+    # Get all variable names from config (excluding mean_awareness which is already in awareness_aggregated.tb)
+      vars_to_join <- setdiff(names(var_config), "mean_awareness")
+
+    # Join all variables from data.tb
+      awareness_aggregated.tb <- awareness_aggregated.tb %>%
+        left_join(
+          data.tb %>% select(all_of(c(id.varnames, vars_to_join))),
+          by = id.varnames
+        )
+
+    # Apply filtering for all variables
+      regression_data.tb <- awareness_aggregated.tb
+
+      for (var_name in names(var_config)) {
+        if (var_name %in% names(regression_data.tb)) {
+          exclude_vals <- var_config[[var_name]]$exclude
+
+          # Filter out excluded values and NAs
+          regression_data.tb <- regression_data.tb %>%
+            filter(!is.na(.data[[var_name]]))
+
+          if (length(exclude_vals) > 0) {
+            regression_data.tb <- regression_data.tb %>%
+              filter(!(.data[[var_name]] %in% exclude_vals))
+          }
+        }
+      }
+
+    # Set base categories for factor variables
+      for (var_name in names(var_config)) {
+        base_val <- var_config[[var_name]]$base
+
+        if (!is.na(base_val) && var_name %in% names(regression_data.tb)) {
+          # Get all unique values for this variable
+          all_vals <- unique(regression_data.tb[[var_name]])
+
+          # Create factor with base category FIRST in levels (becomes reference)
+          new_levels <- c(base_val, setdiff(all_vals, base_val))
+
+          regression_data.tb <- regression_data.tb %>%
+            mutate(!!var_name := factor(.data[[var_name]], levels = new_levels))
+        }
+      }
+
+    # Remove variables with only 1 unique value (cannot be used in regression)
+      vars_to_remove <- c()
+
+      for (var_name in names(var_config)) {
+        if (var_name %in% names(regression_data.tb)) {
+          n_unique <- length(unique(regression_data.tb[[var_name]]))
+
+          if (n_unique <= 1) {
+            vars_to_remove <- c(vars_to_remove, var_name)
+          }
+        }
+      }
+
+      if (length(vars_to_remove) > 0) {
+        cat("WARNING: Removing variables with ≤1 unique value:\n")
+        for (var in vars_to_remove) {
+          cat("  - ", var, "\n", sep = "")
+        }
+        cat("\n")
+
+        regression_data.tb <- regression_data.tb %>%
+          select(-all_of(vars_to_remove))
+      }
+
+    cat("Sample size for regression:", nrow(regression_data.tb), "\n\n")
+
+    # Fit the model
+    lm_model1 <- lm(mean_awareness ~ 
+                    age + sex + ethnicity + nationality.native + language.native + student.status + 
+                    employment.status + political.affiliation,
+                    data = regression_data.tb)
+    
+    cat("MODEL SUMMARY:\n") # Display summary
+    print(summary(lm_model1))
