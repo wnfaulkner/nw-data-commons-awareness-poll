@@ -15,7 +15,12 @@ CLEANING
     -- Political.affiliation : standardize 'Dont know' & 'Don't Know'; add (UK) and (US) to all labels
 
 ANALYSIS & STATISTICAL TESTS
-  - Visualize differences in infographic vs. no-infographic by various demographic variables. For example, the graph on the next page displays the patterns of change in nuclear support among respondents from the main US political parties. For Democrats there is a clear leftward shift, but among Republicans the story is more complicated. Showing the infographic among Republican voters correlates with a shift shift from the edges (extremes) towards the center.
+  - Visualize differences in infographic vs. no-infographic by various demographic variables. 
+    For example, display the patterns of change in nuclear support among respondents from the 
+    main US political parties. For Democrats there is a clear leftward shift, but among Republicans the story is more complicated. 
+    Showing the infographic among Republican voters correlates with a shift from the edges (extremes) towards the center.
+  - Regressions: 
+      - coefficient plots
 
 
 EXPORT

@@ -404,613 +404,580 @@
 
 # 4-ANALYSIS, STATISTICAL TESTS -------------------------------------------------------------------------------
 
-run.bivariate.tests <- FALSE
+  run.bivariate.tests <- FALSE
 
-if(run.bivariate.tests){  
-  # DEFINE FUNCTION FOR CONVERTING CHARACTER VARIABLES TO FACTORS
-    convert_character_var_to_factor <- function(x) {
-      factor(
-        na_if(x, "0. not participating"),
-        levels = c(
-          "1. never heard",
-          "2. heard a little",
-          "3. know something",
-          "4. know a lot"
-        ),
-        ordered = TRUE
-      )
-    }
-
-  # GENERALIZED BIVARIATE TESTING FUNCTION
-    BivariateTesting <- function(
-      data_long,                        # Long-format data (e.g., awareness.tb, support.reaction.tb)
-      rhs_var = "value.num",            # RHS ordinal variable (numeric response values)
-      lhs_var,                          # LHS demographic variable name
-      questions_config = questions.tb,  # Configuration table with stat.test.remove.vals
-      rhs_category_var = "category",    # Column containing subcategories
-      use_subcategories = TRUE,         # Whether to analyze by subcategory
-      verbose = TRUE                    # Print detailed output
-    ) {
-
-      # HELPER FUNCTION: Parse and filter values based on config
-      filter_values <- function(data, var_name, config_table) {
-        # Get counts before filtering (excluding NA)
-        counts_before <- data %>%
-          filter(!is.na(.data[[var_name]])) %>%
-          group_by(.data[[var_name]]) %>%
-          summarize(n = n(), .groups = "drop")
-
-        # Always remove NA
-        data_filtered <- data %>% filter(!is.na(.data[[var_name]]))
-
-        # Get removal values from config
-        remove_vals_str <- config_table %>%
-          filter(var.name == var_name) %>%
-          pull(stat.test.remove.vals)
-
-        if (length(remove_vals_str) > 0 && !is.na(remove_vals_str[1])) {
-          # Parse comma-separated values
-          remove_vals <- strsplit(remove_vals_str[1], ",\\s*|,")[[1]]
-          remove_vals <- trimws(remove_vals)
-
-          # Get counts of values being removed
-          removed_counts <- counts_before %>%
-            filter(.data[[var_name]] %in% remove_vals)
-
-          # Filter out specified values
-          data_filtered <- data_filtered %>%
-            filter(!(.data[[var_name]] %in% remove_vals))
-
-          if (verbose && nrow(removed_counts) > 0) {
-            cat("  Config-based filtering for", var_name, ":\n")
-            for (i in seq_len(nrow(removed_counts))) {
-              cat("    Removed:", removed_counts[[var_name]][i], "(n =", removed_counts$n[i], ")\n")
-            }
-          }
-        }
-
-        return(data_filtered)
+  if(run.bivariate.tests){  
+    # DEFINE FUNCTION FOR CONVERTING CHARACTER VARIABLES TO FACTORS
+      convert_character_var_to_factor <- function(x) {
+        factor(
+          na_if(x, "0. not participating"),
+          levels = c(
+            "1. never heard",
+            "2. heard a little",
+            "3. know something",
+            "4. know a lot"
+          ),
+          ordered = TRUE
+        )
       }
 
-      # HELPER FUNCTION: Detect variable type based on R class
-      detect_var_type <- function(var_data) {
-        var_class <- class(var_data)[1]
-        n_unique <- var_data %>% na.omit() %>% unique() %>% length()
+    # GENERALIZED BIVARIATE TESTING FUNCTION
+      BivariateTesting <- function(
+        data_long,                        # Long-format data (e.g., awareness.tb, support.reaction.tb)
+        rhs_var = "value.num",            # RHS ordinal variable (numeric response values)
+        lhs_var,                          # LHS demographic variable name
+        questions_config = questions.tb,  # Configuration table with stat.test.remove.vals
+        rhs_category_var = "category",    # Column containing subcategories
+        use_subcategories = TRUE,         # Whether to analyze by subcategory
+        verbose = TRUE                    # Print detailed output
+      ) {
 
-        # Numeric detection: numeric/integer class AND >10 unique values
-        if (var_class %in% c("numeric", "integer") && n_unique > 10) {
-          return(list(
-            type = "numeric",
-            test_method = "spearman",
-            n_levels = n_unique,
-            min_group_size = 30  # For correlation, need reasonable sample size
-          ))
-        }
-
-        # Categorical/Binary/Ordinal: character/factor OR ≤10 unique values
-        if (var_class %in% c("character", "factor") || n_unique <= 10) {
-          if (n_unique == 2) {
-            var_type <- "binary"
-            min_size <- 10  # Binary comparisons can work with smaller samples
-          } else if (n_unique >= 3) {
-            var_type <- "categorical"
-            min_size <- 5  # Multiple groups need smaller minimum per group
-          } else {
-            var_type <- "single_value"
-            min_size <- NA
-          }
-
-          return(list(
-            type = var_type,
-            test_method = "kruskal_wallis",
-            n_levels = n_unique,
-            min_group_size = min_size
-          ))
-        }
-
-        # Fallback
-        return(list(
-          type = "unknown",
-          test_method = NA,
-          n_levels = n_unique,
-          min_group_size = NA
-        ))
-      }
-
-      # HELPER FUNCTION: Filter small groups and report
-      filter_small_groups <- function(data, var_name, min_size, var_info) {
-        # Get group sizes before filtering
-        group_sizes <- data %>%
-          group_by(.data[[var_name]]) %>%
-          summarize(n = n(), .groups = "drop")
-
-        # Identify small groups
-        small_groups <- group_sizes %>%
-          filter(n < min_size)
-
-        # Filter out small groups
-        if (nrow(small_groups) > 0) {
-          data_filtered <- data %>%
+        # HELPER FUNCTION: Parse and filter values based on config
+        filter_values <- function(data, var_name, config_table) {
+          # Get counts before filtering (excluding NA)
+          counts_before <- data %>%
+            filter(!is.na(.data[[var_name]])) %>%
             group_by(.data[[var_name]]) %>%
-            filter(n() >= min_size) %>%
-            ungroup()
+            summarize(n = n(), .groups = "drop")
 
-          if (verbose) {
-            cat("  Small group filtering rule: min", min_size, "observations per", var_info$type, "group\n")
-            cat("  Removed", nrow(small_groups), "group(s) with insufficient data:\n")
-            for (i in seq_len(nrow(small_groups))) {
-              cat("    -", small_groups[[var_name]][i], ": n =", small_groups$n[i], "\n")
-            }
-            cat("  Remaining groups:\n")
-            remaining_sizes <- data_filtered %>%
-              group_by(.data[[var_name]]) %>%
-              summarize(n = n(), .groups = "drop")
-            for (i in seq_len(nrow(remaining_sizes))) {
-              cat("    -", remaining_sizes[[var_name]][i], ": n =", remaining_sizes$n[i], "\n")
+          # Always remove NA
+          data_filtered <- data %>% filter(!is.na(.data[[var_name]]))
+
+          # Get removal values from config
+          remove_vals_str <- config_table %>%
+            filter(var.name == var_name) %>%
+            pull(stat.test.remove.vals)
+
+          if (length(remove_vals_str) > 0 && !is.na(remove_vals_str[1])) {
+            # Parse comma-separated values
+            remove_vals <- strsplit(remove_vals_str[1], ",\\s*|,")[[1]]
+            remove_vals <- trimws(remove_vals)
+
+            # Get counts of values being removed
+            removed_counts <- counts_before %>%
+              filter(.data[[var_name]] %in% remove_vals)
+
+            # Filter out specified values
+            data_filtered <- data_filtered %>%
+              filter(!(.data[[var_name]] %in% remove_vals))
+
+            if (verbose && nrow(removed_counts) > 0) {
+              cat("  Config-based filtering for", var_name, ":\n")
+              for (i in seq_len(nrow(removed_counts))) {
+                cat("    Removed:", removed_counts[[var_name]][i], "(n =", removed_counts$n[i], ")\n")
+              }
             }
           }
 
           return(data_filtered)
-        } else {
-          if (verbose) {
-            cat("  Small group filtering rule: min", min_size, "observations per", var_info$type, "group\n")
-            cat("  Removed groups: none\n")
-            cat("  All groups:\n")
-            for (i in seq_len(nrow(group_sizes))) {
-              cat("    -", group_sizes[[var_name]][i], ": n =", group_sizes$n[i], "\n")
+        }
+
+        # HELPER FUNCTION: Detect variable type based on R class
+        detect_var_type <- function(var_data) {
+          var_class <- class(var_data)[1]
+          n_unique <- var_data %>% na.omit() %>% unique() %>% length()
+
+          # Numeric detection: numeric/integer class AND >10 unique values
+          if (var_class %in% c("numeric", "integer") && n_unique > 10) {
+            return(list(
+              type = "numeric",
+              test_method = "spearman",
+              n_levels = n_unique,
+              min_group_size = 30  # For correlation, need reasonable sample size
+            ))
+          }
+
+          # Categorical/Binary/Ordinal: character/factor OR ≤10 unique values
+          if (var_class %in% c("character", "factor") || n_unique <= 10) {
+            if (n_unique == 2) {
+              var_type <- "binary"
+              min_size <- 10  # Binary comparisons can work with smaller samples
+            } else if (n_unique >= 3) {
+              var_type <- "categorical"
+              min_size <- 5  # Multiple groups need smaller minimum per group
+            } else {
+              var_type <- "single_value"
+              min_size <- NA
             }
+
+            return(list(
+              type = var_type,
+              test_method = "kruskal_wallis",
+              n_levels = n_unique,
+              min_group_size = min_size
+            ))
           }
-          return(data)
-        }
-      }
 
-      # ========== STEP 1: VALIDATE & FILTER DATA ==========
-      if (verbose) {
-        cat("\n==================================================\n")
-        cat("BIVARIATE TESTING: ", lhs_var, " vs ", rhs_var, "\n")
-        cat("==================================================\n\n")
-      }
-
-      # Check if variables exist
-      if (!rhs_var %in% names(data_long)) {
-        stop(paste("RHS variable", rhs_var, "not found in data"))
-      }
-      if (!lhs_var %in% names(data_long)) {
-        stop(paste("LHS variable", lhs_var, "not found in data"))
-      }
-
-      # Filter data: remove NAs and configured exclusion values
-      if (verbose) cat("Step 1: Filtering data\n")
-
-      data_filtered <- data_long %>%
-        filter(!is.na(.data[[rhs_var]])) %>%
-        filter(!is.na(.data[[lhs_var]]))
-
-      # Apply LHS filtering based on config
-      data_filtered <- filter_values(data_filtered, lhs_var, questions_config)
-
-      n_after_config_filter <- nrow(data_filtered)
-      if (verbose) cat("  Observations after config-based filtering:", n_after_config_filter, "\n\n")
-
-      # ========== STEP 2: DETECT VARIABLE TYPES ==========
-      if (verbose) cat("Step 2: Detecting variable types\n")
-
-      lhs_info <- detect_var_type(data_filtered[[lhs_var]])
-
-      if (verbose) {
-        cat("  LHS Variable:", lhs_var, "\n")
-        cat("    - Class:", class(data_filtered[[lhs_var]])[1], "\n")
-        cat("    - Detected type:", lhs_info$type, "\n")
-        cat("    - Test method:", lhs_info$test_method, "\n")
-        cat("    - Number of unique values:", lhs_info$n_levels, "\n")
-        cat("    - Minimum sample size:", lhs_info$min_group_size, "\n\n")
-      }
-
-      # ========== STEP 3: APPLY MINIMUM SIZE FILTERING ==========
-      if (verbose) cat("Step 3: Applying minimum size filtering\n")
-
-      # For numeric variables, check total sample size
-      if (lhs_info$test_method == "spearman") {
-        if (n_after_config_filter < lhs_info$min_group_size) {
-          if (verbose) {
-            cat("  ERROR: Insufficient total observations (n =", n_after_config_filter,
-                ") for correlation analysis\n")
-            cat("  Minimum required:", lhs_info$min_group_size, "\n\n")
-          }
+          # Fallback
           return(list(
-            lhs_var = lhs_var,
-            rhs_var = rhs_var,
-            lhs_type = lhs_info$type,
-            error = paste("Insufficient data: n =", n_after_config_filter,
-                        "< minimum", lhs_info$min_group_size)
-          ))
-        } else {
-          if (verbose) {
-            cat("  Sample size rule: min", lhs_info$min_group_size, "observations for correlation\n")
-            cat("  Total observations:", n_after_config_filter, "✓\n\n")
-          }
-          data_filtered_final <- data_filtered
-          n_total <- n_after_config_filter
-        }
-      } else if (lhs_info$test_method == "kruskal_wallis") {
-        # For categorical variables, filter small groups
-        data_filtered_final <- filter_small_groups(
-          data_filtered,
-          lhs_var,
-          lhs_info$min_group_size,
-          lhs_info
-        )
-        n_total <- nrow(data_filtered_final)
-
-        # Check if at least 2 groups remain
-        n_groups_remaining <- data_filtered_final %>%
-          pull(.data[[lhs_var]]) %>%
-          unique() %>%
-          length()
-
-        if (n_groups_remaining < 2) {
-          if (verbose) {
-            cat("  ERROR: Fewer than 2 groups remaining after filtering\n\n")
-          }
-          return(list(
-            lhs_var = lhs_var,
-            rhs_var = rhs_var,
-            lhs_type = lhs_info$type,
-            error = "Insufficient groups after filtering"
+            type = "unknown",
+            test_method = NA,
+            n_levels = n_unique,
+            min_group_size = NA
           ))
         }
 
-        if (verbose) {
-          cat("  Groups remaining:", n_groups_remaining, "\n")
-          cat("  Total observations:", n_total, "\n\n")
-        }
-      }
+        # HELPER FUNCTION: Filter small groups and report
+        filter_small_groups <- function(data, var_name, min_size, var_info) {
+          # Get group sizes before filtering
+          group_sizes <- data %>%
+            group_by(.data[[var_name]]) %>%
+            summarize(n = n(), .groups = "drop")
 
-      # Initialize results list
-      results <- list(
-        lhs_var = lhs_var,
-        rhs_var = rhs_var,
-        lhs_class = class(data_filtered_final[[lhs_var]])[1],
-        lhs_type = lhs_info$type,
-        test_method = lhs_info$test_method,
-        min_group_size = lhs_info$min_group_size,
-        n_total = n_total,
-        combined_results = list(),
-        subcategory_results = list()
-      )
+          # Identify small groups
+          small_groups <- group_sizes %>%
+            filter(n < min_size)
 
-      # ========== STEP 4: COMBINED ANALYSIS (All Subcategories) ==========
-      if (verbose) cat("Step 4: Combined analysis (all subcategories together)\n\n")
+          # Filter out small groups
+          if (nrow(small_groups) > 0) {
+            data_filtered <- data %>%
+              group_by(.data[[var_name]]) %>%
+              filter(n() >= min_size) %>%
+              ungroup()
 
-      if (lhs_info$test_method == "spearman") {
-        # NUMERIC LHS: Spearman correlation
-
-        cor_value <- cor(
-          as.numeric(data_filtered_final[[rhs_var]]),
-          as.numeric(data_filtered_final[[lhs_var]]),
-          method = "spearman",
-          use = "complete.obs"
-        )
-
-        cor_test <- cor.test(
-          as.numeric(data_filtered_final[[rhs_var]]),
-          as.numeric(data_filtered_final[[lhs_var]]),
-          method = "spearman",
-          exact = FALSE
-        )
-
-        results$combined_results <- list(
-          n = n_total,
-          correlation = cor_value,
-          rho = cor_test$estimate,
-          p_value = cor_test$p.value,
-          statistic = cor_test$statistic
-        )
-
-        if (verbose) {
-          cat("  Test: Spearman's Rank Correlation\n")
-          cat("  N:", n_total, "\n")
-          cat("  Correlation (rho):", round(cor_value, 4), "\n")
-          cat("  P-value:", format.pval(cor_test$p.value, digits = 3), "\n\n")
-        }
-
-      } else if (lhs_info$test_method == "kruskal_wallis") {
-        # CATEGORICAL/BINARY/ORDINAL LHS: Kruskal-Wallis + descriptive stats
-
-        # Descriptive statistics by group
-        descriptive_stats <- data_filtered_final %>%
-          group_by(.data[[lhs_var]]) %>%
-          summarize(
-            n = n(),
-            mean = mean(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
-            median = median(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
-            sd = sd(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
-            .groups = "drop"
-          ) %>%
-          arrange(desc(median))
-
-        kw_test <- kruskal.test(
-          as.numeric(data_filtered_final[[rhs_var]]) ~ data_filtered_final[[lhs_var]]
-        )
-
-        results$combined_results <- list(
-          n = n_total,
-          n_groups = nrow(descriptive_stats),
-          descriptive_stats = descriptive_stats,
-          kw_statistic = kw_test$statistic,
-          kw_df = kw_test$parameter,
-          p_value = kw_test$p.value,
-          significance = ifelse(kw_test$p.value < 0.05, "Significant", "Not significant")
-        )
-
-        if (verbose) {
-          cat("  Test: Kruskal-Wallis\n")
-          cat("  N:", n_total, "\n")
-          cat("  Groups:", nrow(descriptive_stats), "\n\n")
-          cat("  Descriptive Statistics by Group:\n")
-          print(descriptive_stats, n = Inf)
-          cat("\n  Kruskal-Wallis chi-squared:", round(kw_test$statistic, 4), "\n")
-          cat("  df:", kw_test$parameter, "\n")
-          cat("  P-value:", format.pval(kw_test$p.value, digits = 3), "\n")
-          cat("  Significance:", results$combined_results$significance, "\n\n")
-        }
-      }
-
-      # ========== STEP 5: SUBCATEGORY ANALYSIS ==========
-      if (use_subcategories && rhs_category_var %in% names(data_long)) {
-        if (verbose) cat("Step 5: Subcategory analysis (broken out by each subcategory)\n\n")
-
-        # Get unique subcategories
-        subcategories <- data_filtered_final %>%
-          filter(!is.na(.data[[rhs_category_var]])) %>%
-          pull(.data[[rhs_category_var]]) %>%
-          unique() %>%
-          sort()
-
-        for (subcat in subcategories) {
-          if (verbose) cat("  Subcategory:", subcat, "\n")
-
-          # Filter for this subcategory
-          data_subcat <- data_filtered_final %>%
-            filter(.data[[rhs_category_var]] == subcat)
-
-          n_subcat_before <- nrow(data_subcat)
-
-          # Apply same filtering logic for subcategory
-          if (lhs_info$test_method == "spearman") {
-            # Check total sample size
-            if (n_subcat_before < lhs_info$min_group_size) {
-              if (verbose) {
-                cat("    WARNING: Insufficient data (n =", n_subcat_before,
-                    "< min", lhs_info$min_group_size, ")\n\n")
+            if (verbose) {
+              cat("  Small group filtering rule: min", min_size, "observations per", var_info$type, "group\n")
+              cat("  Removed", nrow(small_groups), "group(s) with insufficient data:\n")
+              for (i in seq_len(nrow(small_groups))) {
+                cat("    -", small_groups[[var_name]][i], ": n =", small_groups$n[i], "\n")
               }
-              results$subcategory_results[[subcat]] <- list(
-                n = n_subcat_before,
-                error = "Insufficient data"
-              )
-              next
+              cat("  Remaining groups:\n")
+              remaining_sizes <- data_filtered %>%
+                group_by(.data[[var_name]]) %>%
+                summarize(n = n(), .groups = "drop")
+              for (i in seq_len(nrow(remaining_sizes))) {
+                cat("    -", remaining_sizes[[var_name]][i], ": n =", remaining_sizes$n[i], "\n")
+              }
             }
-            data_subcat_final <- data_subcat
-            n_subcat <- n_subcat_before
 
-          } else if (lhs_info$test_method == "kruskal_wallis") {
-            # Filter small groups within subcategory
-            data_subcat_final <- filter_small_groups(
-              data_subcat,
-              lhs_var,
-              lhs_info$min_group_size,
-              lhs_info
-            )
-            n_subcat <- nrow(data_subcat_final)
+            return(data_filtered)
+          } else {
+            if (verbose) {
+              cat("  Small group filtering rule: min", min_size, "observations per", var_info$type, "group\n")
+              cat("  Removed groups: none\n")
+              cat("  All groups:\n")
+              for (i in seq_len(nrow(group_sizes))) {
+                cat("    -", group_sizes[[var_name]][i], ": n =", group_sizes$n[i], "\n")
+              }
+            }
+            return(data)
+          }
+        }
 
-            # Check if at least 2 groups remain
-            n_groups_subcat <- data_subcat_final %>%
-              pull(.data[[lhs_var]]) %>%
-              unique() %>%
-              length()
+        # ========== STEP 1: VALIDATE & FILTER DATA ==========
+        if (verbose) {
+          cat("\n==================================================\n")
+          cat("BIVARIATE TESTING: ", lhs_var, " vs ", rhs_var, "\n")
+          cat("==================================================\n\n")
+        }
 
-            if (n_groups_subcat < 2) {
-              if (verbose) cat("    WARNING: Fewer than 2 groups remaining\n\n")
+        # Check if variables exist
+        if (!rhs_var %in% names(data_long)) {
+          stop(paste("RHS variable", rhs_var, "not found in data"))
+        }
+        if (!lhs_var %in% names(data_long)) {
+          stop(paste("LHS variable", lhs_var, "not found in data"))
+        }
+
+        # Filter data: remove NAs and configured exclusion values
+        if (verbose) cat("Step 1: Filtering data\n")
+
+        data_filtered <- data_long %>%
+          filter(!is.na(.data[[rhs_var]])) %>%
+          filter(!is.na(.data[[lhs_var]]))
+
+        # Apply LHS filtering based on config
+        data_filtered <- filter_values(data_filtered, lhs_var, questions_config)
+
+        n_after_config_filter <- nrow(data_filtered)
+        if (verbose) cat("  Observations after config-based filtering:", n_after_config_filter, "\n\n")
+
+        # ========== STEP 2: DETECT VARIABLE TYPES ==========
+        if (verbose) cat("Step 2: Detecting variable types\n")
+
+        lhs_info <- detect_var_type(data_filtered[[lhs_var]])
+
+        if (verbose) {
+          cat("  LHS Variable:", lhs_var, "\n")
+          cat("    - Class:", class(data_filtered[[lhs_var]])[1], "\n")
+          cat("    - Detected type:", lhs_info$type, "\n")
+          cat("    - Test method:", lhs_info$test_method, "\n")
+          cat("    - Number of unique values:", lhs_info$n_levels, "\n")
+          cat("    - Minimum sample size:", lhs_info$min_group_size, "\n\n")
+        }
+
+        # ========== STEP 3: APPLY MINIMUM SIZE FILTERING ==========
+        if (verbose) cat("Step 3: Applying minimum size filtering\n")
+
+        # For numeric variables, check total sample size
+        if (lhs_info$test_method == "spearman") {
+          if (n_after_config_filter < lhs_info$min_group_size) {
+            if (verbose) {
+              cat("  ERROR: Insufficient total observations (n =", n_after_config_filter,
+                  ") for correlation analysis\n")
+              cat("  Minimum required:", lhs_info$min_group_size, "\n\n")
+            }
+            return(list(
+              lhs_var = lhs_var,
+              rhs_var = rhs_var,
+              lhs_type = lhs_info$type,
+              error = paste("Insufficient data: n =", n_after_config_filter,
+                          "< minimum", lhs_info$min_group_size)
+            ))
+          } else {
+            if (verbose) {
+              cat("  Sample size rule: min", lhs_info$min_group_size, "observations for correlation\n")
+              cat("  Total observations:", n_after_config_filter, "✓\n\n")
+            }
+            data_filtered_final <- data_filtered
+            n_total <- n_after_config_filter
+          }
+        } else if (lhs_info$test_method == "kruskal_wallis") {
+          # For categorical variables, filter small groups
+          data_filtered_final <- filter_small_groups(
+            data_filtered,
+            lhs_var,
+            lhs_info$min_group_size,
+            lhs_info
+          )
+          n_total <- nrow(data_filtered_final)
+
+          # Check if at least 2 groups remain
+          n_groups_remaining <- data_filtered_final %>%
+            pull(.data[[lhs_var]]) %>%
+            unique() %>%
+            length()
+
+          if (n_groups_remaining < 2) {
+            if (verbose) {
+              cat("  ERROR: Fewer than 2 groups remaining after filtering\n\n")
+            }
+            return(list(
+              lhs_var = lhs_var,
+              rhs_var = rhs_var,
+              lhs_type = lhs_info$type,
+              error = "Insufficient groups after filtering"
+            ))
+          }
+
+          if (verbose) {
+            cat("  Groups remaining:", n_groups_remaining, "\n")
+            cat("  Total observations:", n_total, "\n\n")
+          }
+        }
+
+        # Initialize results list
+        results <- list(
+          lhs_var = lhs_var,
+          rhs_var = rhs_var,
+          lhs_class = class(data_filtered_final[[lhs_var]])[1],
+          lhs_type = lhs_info$type,
+          test_method = lhs_info$test_method,
+          min_group_size = lhs_info$min_group_size,
+          n_total = n_total,
+          combined_results = list(),
+          subcategory_results = list()
+        )
+
+        # ========== STEP 4: COMBINED ANALYSIS (All Subcategories) ==========
+        if (verbose) cat("Step 4: Combined analysis (all subcategories together)\n\n")
+
+        if (lhs_info$test_method == "spearman") {
+          # NUMERIC LHS: Spearman correlation
+
+          cor_value <- cor(
+            as.numeric(data_filtered_final[[rhs_var]]),
+            as.numeric(data_filtered_final[[lhs_var]]),
+            method = "spearman",
+            use = "complete.obs"
+          )
+
+          cor_test <- cor.test(
+            as.numeric(data_filtered_final[[rhs_var]]),
+            as.numeric(data_filtered_final[[lhs_var]]),
+            method = "spearman",
+            exact = FALSE
+          )
+
+          results$combined_results <- list(
+            n = n_total,
+            correlation = cor_value,
+            rho = cor_test$estimate,
+            p_value = cor_test$p.value,
+            statistic = cor_test$statistic
+          )
+
+          if (verbose) {
+            cat("  Test: Spearman's Rank Correlation\n")
+            cat("  N:", n_total, "\n")
+            cat("  Correlation (rho):", round(cor_value, 4), "\n")
+            cat("  P-value:", format.pval(cor_test$p.value, digits = 3), "\n\n")
+          }
+
+        } else if (lhs_info$test_method == "kruskal_wallis") {
+          # CATEGORICAL/BINARY/ORDINAL LHS: Kruskal-Wallis + descriptive stats
+
+          # Descriptive statistics by group
+          descriptive_stats <- data_filtered_final %>%
+            group_by(.data[[lhs_var]]) %>%
+            summarize(
+              n = n(),
+              mean = mean(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
+              median = median(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
+              sd = sd(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
+              .groups = "drop"
+            ) %>%
+            arrange(desc(median))
+
+          kw_test <- kruskal.test(
+            as.numeric(data_filtered_final[[rhs_var]]) ~ data_filtered_final[[lhs_var]]
+          )
+
+          results$combined_results <- list(
+            n = n_total,
+            n_groups = nrow(descriptive_stats),
+            descriptive_stats = descriptive_stats,
+            kw_statistic = kw_test$statistic,
+            kw_df = kw_test$parameter,
+            p_value = kw_test$p.value,
+            significance = ifelse(kw_test$p.value < 0.05, "Significant", "Not significant")
+          )
+
+          if (verbose) {
+            cat("  Test: Kruskal-Wallis\n")
+            cat("  N:", n_total, "\n")
+            cat("  Groups:", nrow(descriptive_stats), "\n\n")
+            cat("  Descriptive Statistics by Group:\n")
+            print(descriptive_stats, n = Inf)
+            cat("\n  Kruskal-Wallis chi-squared:", round(kw_test$statistic, 4), "\n")
+            cat("  df:", kw_test$parameter, "\n")
+            cat("  P-value:", format.pval(kw_test$p.value, digits = 3), "\n")
+            cat("  Significance:", results$combined_results$significance, "\n\n")
+          }
+        }
+
+        # ========== STEP 5: SUBCATEGORY ANALYSIS ==========
+        if (use_subcategories && rhs_category_var %in% names(data_long)) {
+          if (verbose) cat("Step 5: Subcategory analysis (broken out by each subcategory)\n\n")
+
+          # Get unique subcategories
+          subcategories <- data_filtered_final %>%
+            filter(!is.na(.data[[rhs_category_var]])) %>%
+            pull(.data[[rhs_category_var]]) %>%
+            unique() %>%
+            sort()
+
+          for (subcat in subcategories) {
+            if (verbose) cat("  Subcategory:", subcat, "\n")
+
+            # Filter for this subcategory
+            data_subcat <- data_filtered_final %>%
+              filter(.data[[rhs_category_var]] == subcat)
+
+            n_subcat_before <- nrow(data_subcat)
+
+            # Apply same filtering logic for subcategory
+            if (lhs_info$test_method == "spearman") {
+              # Check total sample size
+              if (n_subcat_before < lhs_info$min_group_size) {
+                if (verbose) {
+                  cat("    WARNING: Insufficient data (n =", n_subcat_before,
+                      "< min", lhs_info$min_group_size, ")\n\n")
+                }
+                results$subcategory_results[[subcat]] <- list(
+                  n = n_subcat_before,
+                  error = "Insufficient data"
+                )
+                next
+              }
+              data_subcat_final <- data_subcat
+              n_subcat <- n_subcat_before
+
+            } else if (lhs_info$test_method == "kruskal_wallis") {
+              # Filter small groups within subcategory
+              data_subcat_final <- filter_small_groups(
+                data_subcat,
+                lhs_var,
+                lhs_info$min_group_size,
+                lhs_info
+              )
+              n_subcat <- nrow(data_subcat_final)
+
+              # Check if at least 2 groups remain
+              n_groups_subcat <- data_subcat_final %>%
+                pull(.data[[lhs_var]]) %>%
+                unique() %>%
+                length()
+
+              if (n_groups_subcat < 2) {
+                if (verbose) cat("    WARNING: Fewer than 2 groups remaining\n\n")
+                results$subcategory_results[[subcat]] <- list(
+                  n = n_subcat,
+                  error = "Insufficient groups"
+                )
+                next
+              }
+            }
+
+            # Run appropriate test
+            if (lhs_info$test_method == "spearman") {
+              # Spearman correlation
+              cor_test_sub <- cor.test(
+                as.numeric(data_subcat_final[[rhs_var]]),
+                as.numeric(data_subcat_final[[lhs_var]]),
+                method = "spearman",
+                exact = FALSE
+              )
+
               results$subcategory_results[[subcat]] <- list(
                 n = n_subcat,
-                error = "Insufficient groups"
+                rho = cor_test_sub$estimate,
+                p_value = cor_test_sub$p.value
               )
-              next
-            }
-          }
 
-          # Run appropriate test
-          if (lhs_info$test_method == "spearman") {
-            # Spearman correlation
-            cor_test_sub <- cor.test(
-              as.numeric(data_subcat_final[[rhs_var]]),
-              as.numeric(data_subcat_final[[lhs_var]]),
-              method = "spearman",
-              exact = FALSE
-            )
+              if (verbose) {
+                cat("    N:", n_subcat, "\n")
+                cat("    Correlation (rho):", round(cor_test_sub$estimate, 4), "\n")
+                cat("    P-value:", format.pval(cor_test_sub$p.value, digits = 3), "\n\n")
+              }
 
-            results$subcategory_results[[subcat]] <- list(
-              n = n_subcat,
-              rho = cor_test_sub$estimate,
-              p_value = cor_test_sub$p.value
-            )
+            } else if (lhs_info$test_method == "kruskal_wallis") {
+              # Kruskal-Wallis + descriptive stats
+              descriptive_stats_sub <- data_subcat_final %>%
+                group_by(.data[[lhs_var]]) %>%
+                summarize(
+                  n = n(),
+                  mean = mean(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
+                  median = median(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
+                  sd = sd(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
+                  .groups = "drop"
+                ) %>%
+                arrange(desc(median))
 
-            if (verbose) {
-              cat("    N:", n_subcat, "\n")
-              cat("    Correlation (rho):", round(cor_test_sub$estimate, 4), "\n")
-              cat("    P-value:", format.pval(cor_test_sub$p.value, digits = 3), "\n\n")
-            }
+              kw_test_sub <- kruskal.test(
+                as.numeric(data_subcat_final[[rhs_var]]) ~ data_subcat_final[[lhs_var]]
+              )
 
-          } else if (lhs_info$test_method == "kruskal_wallis") {
-            # Kruskal-Wallis + descriptive stats
-            descriptive_stats_sub <- data_subcat_final %>%
-              group_by(.data[[lhs_var]]) %>%
-              summarize(
-                n = n(),
-                mean = mean(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
-                median = median(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
-                sd = sd(as.numeric(.data[[rhs_var]]), na.rm = TRUE),
-                .groups = "drop"
-              ) %>%
-              arrange(desc(median))
+              results$subcategory_results[[subcat]] <- list(
+                n = n_subcat,
+                n_groups = nrow(descriptive_stats_sub),
+                descriptive_stats = descriptive_stats_sub,
+                kw_statistic = kw_test_sub$statistic,
+                p_value = kw_test_sub$p.value,
+                significance = ifelse(kw_test_sub$p.value < 0.05, "Significant", "Not significant")
+              )
 
-            kw_test_sub <- kruskal.test(
-              as.numeric(data_subcat_final[[rhs_var]]) ~ data_subcat_final[[lhs_var]]
-            )
-
-            results$subcategory_results[[subcat]] <- list(
-              n = n_subcat,
-              n_groups = nrow(descriptive_stats_sub),
-              descriptive_stats = descriptive_stats_sub,
-              kw_statistic = kw_test_sub$statistic,
-              p_value = kw_test_sub$p.value,
-              significance = ifelse(kw_test_sub$p.value < 0.05, "Significant", "Not significant")
-            )
-
-            if (verbose) {
-              cat("    N:", n_subcat, "\n")
-              cat("    Groups:", nrow(descriptive_stats_sub), "\n")
-              print(descriptive_stats_sub, n = Inf)
-              cat("    Kruskal-Wallis chi-squared:", round(kw_test_sub$statistic, 4), "\n")
-              cat("    P-value:", format.pval(kw_test_sub$p.value, digits = 3), "\n")
-              cat("    Significance:", results$subcategory_results[[subcat]]$significance, "\n\n")
+              if (verbose) {
+                cat("    N:", n_subcat, "\n")
+                cat("    Groups:", nrow(descriptive_stats_sub), "\n")
+                print(descriptive_stats_sub, n = Inf)
+                cat("    Kruskal-Wallis chi-squared:", round(kw_test_sub$statistic, 4), "\n")
+                cat("    P-value:", format.pval(kw_test_sub$p.value, digits = 3), "\n")
+                cat("    Significance:", results$subcategory_results[[subcat]]$significance, "\n\n")
+              }
             }
           }
         }
+
+        if (verbose) cat("==================================================\n\n")
+
+        # Return results invisibly (can be captured in variable)
+        invisible(results)
       }
 
-      if (verbose) cat("==================================================\n\n")
+    # RUN BIVARIATE TESTS FROM CONFIG TABLE ---------------------------------
 
-      # Return results invisibly (can be captured in variable)
-      invisible(results)
-    }
+      # Initialize empty list to collect all result rows
+      bivariate_results_list <- list()
 
-  # RUN BIVARIATE TESTS FROM CONFIG TABLE ---------------------------------
+      # Loop through each test configuration
+      for (i in seq_len(nrow(bivariate.tests.tb))) {
 
-    # Initialize empty list to collect all result rows
-    bivariate_results_list <- list()
+        # Check if this test should be implemented
+        implement <- bivariate.tests.tb$implement[i]
+        if (is.na(implement) || !implement) {
+          next  # Skip this test
+        }
 
-    # Loop through each test configuration
-    for (i in seq_len(nrow(bivariate.tests.tb))) {
+        # Extract parameters for this test
+        test_name <- bivariate.tests.tb$test_name[i]
+        source_table_name <- bivariate.tests.tb$source_data_table[i]
+        rhs_var <- bivariate.tests.tb$rhs_var[i]
+        lhs_var <- bivariate.tests.tb$lhs_var[i]
+        data_filter <- bivariate.tests.tb$data_filter[i]
+        questions_config_name <- bivariate.tests.tb$questions_config[i]
+        rhs_category_var <- bivariate.tests.tb$rhs_category_var[i]
+        use_subcategories <- bivariate.tests.tb$use_subcategories[i]
+        verbose <- bivariate.tests.tb$verbose[i]
 
-      # Check if this test should be implemented
-      implement <- bivariate.tests.tb$implement[i]
-      if (is.na(implement) || !implement) {
-        next  # Skip this test
-      }
+        # Get the actual data object from the table name
+        source_data <- get(source_table_name)
 
-      # Extract parameters for this test
-      test_name <- bivariate.tests.tb$test_name[i]
-      source_table_name <- bivariate.tests.tb$source_data_table[i]
-      rhs_var <- bivariate.tests.tb$rhs_var[i]
-      lhs_var <- bivariate.tests.tb$lhs_var[i]
-      data_filter <- bivariate.tests.tb$data_filter[i]
-      questions_config_name <- bivariate.tests.tb$questions_config[i]
-      rhs_category_var <- bivariate.tests.tb$rhs_category_var[i]
-      use_subcategories <- bivariate.tests.tb$use_subcategories[i]
-      verbose <- bivariate.tests.tb$verbose[i]
+        # Apply filter if specified (not NA)
+        if (!is.na(data_filter) && data_filter != "NA") {
+          source_data <- source_data %>% filter(eval(parse(text = data_filter)))
+        }
 
-      # Get the actual data object from the table name
-      source_data <- get(source_table_name)
+        # Get the questions config object
+        questions_config <- get(questions_config_name)
 
-      # Apply filter if specified (not NA)
-      if (!is.na(data_filter) && data_filter != "NA") {
-        source_data <- source_data %>% filter(eval(parse(text = data_filter)))
-      }
+        # Print test header
+        cat("\n\n### Test:", test_name, "###\n")
 
-      # Get the questions config object
-      questions_config <- get(questions_config_name)
-
-      # Print test header
-      cat("\n\n### Test:", test_name, "###\n")
-
-      # Run the bivariate test
-      test_result <- BivariateTesting(
-        data_long = source_data,
-        rhs_var = rhs_var,
-        lhs_var = lhs_var,
-        questions_config = questions_config,
-        rhs_category_var = rhs_category_var,
-        use_subcategories = use_subcategories,
-        verbose = verbose
-      )
-
-      # Store result object (can be accessed later if needed)
-      assign(paste0(test_name, "_results"), test_result)
-
-      # Convert test_result to flat table format
-      # Handle errors
-      if (!is.null(test_result$error)) {
-        # Create single row for error case
-        error_row <- tibble(
-          test_name = test_name,
-          source_data_table = source_table_name,
-          data_filter = ifelse(is.na(data_filter), NA_character_, data_filter),
-          lhs_var = lhs_var,
+        # Run the bivariate test
+        test_result <- BivariateTesting(
+          data_long = source_data,
           rhs_var = rhs_var,
-          rhs_category = NA_character_,
-          analysis_level = "overall",
-          lhs_type = test_result$lhs_type,
-          lhs_class = NA_character_,
-          test_method = NA_character_,
-          n_total = NA_integer_,
-          statistic_name = NA_character_,
-          statistic_value = NA_real_,
-          df = NA_real_,
-          p_value = NA_real_,
-          lhs_group = NA_character_,
-          n_groups = NA_integer_,
-          group_n = NA_integer_,
-          group_mean = NA_real_,
-          group_median = NA_real_,
-          group_sd = NA_real_,
-          min_group_size = NA_real_,
-          error_message = test_result$error
-        )
-        bivariate_results_list[[length(bivariate_results_list) + 1]] <- error_row
-        next
-      }
-
-      # Process combined (overall) results
-      if (test_result$test_method == "spearman") {
-        # Spearman correlation - single row
-        overall_row <- tibble(
-          test_name = test_name,
-          source_data_table = source_table_name,
-          data_filter = ifelse(is.na(data_filter), NA_character_, data_filter),
           lhs_var = lhs_var,
-          rhs_var = rhs_var,
-          rhs_category = NA_character_,
-          analysis_level = "overall",
-          lhs_type = test_result$lhs_type,
-          lhs_class = test_result$lhs_class,
-          test_method = test_result$test_method,
-          n_total = test_result$n_total,
-          statistic_name = "rho",
-          statistic_value = test_result$combined_results$rho,
-          df = NA_real_,
-          p_value = test_result$combined_results$p_value,
-          lhs_group = NA_character_,
-          n_groups = NA_integer_,
-          group_n = NA_integer_,
-          group_mean = NA_real_,
-          group_median = NA_real_,
-          group_sd = NA_real_,
-          min_group_size = test_result$min_group_size,
-          error_message = NA_character_
+          questions_config = questions_config,
+          rhs_category_var = rhs_category_var,
+          use_subcategories = use_subcategories,
+          verbose = verbose
         )
-        bivariate_results_list[[length(bivariate_results_list) + 1]] <- overall_row
 
-      } else if (test_result$test_method == "kruskal_wallis") {
-        # Kruskal-Wallis - one row per group
-        desc_stats <- test_result$combined_results$descriptive_stats
+        # Store result object (can be accessed later if needed)
+        assign(paste0(test_name, "_results"), test_result)
 
-        for (j in seq_len(nrow(desc_stats))) {
-          group_row <- tibble(
+        # Convert test_result to flat table format
+        # Handle errors
+        if (!is.null(test_result$error)) {
+          # Create single row for error case
+          error_row <- tibble(
             test_name = test_name,
             source_data_table = source_table_name,
-            data_filter = ifelse(is.na(data_filter), NA_character_,
-                                data_filter),
+            data_filter = ifelse(is.na(data_filter), NA_character_, data_filter),
+            lhs_var = lhs_var,
+            rhs_var = rhs_var,
+            rhs_category = NA_character_,
+            analysis_level = "overall",
+            lhs_type = test_result$lhs_type,
+            lhs_class = NA_character_,
+            test_method = NA_character_,
+            n_total = NA_integer_,
+            statistic_name = NA_character_,
+            statistic_value = NA_real_,
+            df = NA_real_,
+            p_value = NA_real_,
+            lhs_group = NA_character_,
+            n_groups = NA_integer_,
+            group_n = NA_integer_,
+            group_mean = NA_real_,
+            group_median = NA_real_,
+            group_sd = NA_real_,
+            min_group_size = NA_real_,
+            error_message = test_result$error
+          )
+          bivariate_results_list[[length(bivariate_results_list) + 1]] <- error_row
+          next
+        }
+
+        # Process combined (overall) results
+        if (test_result$test_method == "spearman") {
+          # Spearman correlation - single row
+          overall_row <- tibble(
+            test_name = test_name,
+            source_data_table = source_table_name,
+            data_filter = ifelse(is.na(data_filter), NA_character_, data_filter),
             lhs_var = lhs_var,
             rhs_var = rhs_var,
             rhs_category = NA_character_,
@@ -1019,99 +986,98 @@ if(run.bivariate.tests){
             lhs_class = test_result$lhs_class,
             test_method = test_result$test_method,
             n_total = test_result$n_total,
-            statistic_name = "chi-squared",
-            statistic_value = test_result$combined_results$kw_statistic,
-            df = test_result$combined_results$kw_df,
+            statistic_name = "rho",
+            statistic_value = test_result$combined_results$rho,
+            df = NA_real_,
             p_value = test_result$combined_results$p_value,
-            lhs_group = as.character(desc_stats[[lhs_var]][j]),
-            n_groups = test_result$combined_results$n_groups,
-            group_n = desc_stats$n[j],
-            group_mean = desc_stats$mean[j],
-            group_median = desc_stats$median[j],
-            group_sd = desc_stats$sd[j],
+            lhs_group = NA_character_,
+            n_groups = NA_integer_,
+            group_n = NA_integer_,
+            group_mean = NA_real_,
+            group_median = NA_real_,
+            group_sd = NA_real_,
             min_group_size = test_result$min_group_size,
             error_message = NA_character_
           )
-          bivariate_results_list[[length(bivariate_results_list) + 1]] <-
-            group_row
-        }
-      }
+          bivariate_results_list[[length(bivariate_results_list) + 1]] <- overall_row
 
-      # Process subcategory results
-      if (length(test_result$subcategory_results) > 0) {
-        for (subcat_name in names(test_result$subcategory_results)) {
-          subcat_result <- test_result$subcategory_results[[subcat_name]]
+        } else if (test_result$test_method == "kruskal_wallis") {
+          # Kruskal-Wallis - one row per group
+          desc_stats <- test_result$combined_results$descriptive_stats
 
-          # Handle subcategory errors
-          if (!is.null(subcat_result$error)) {
-            subcat_error_row <- tibble(
+          for (j in seq_len(nrow(desc_stats))) {
+            group_row <- tibble(
               test_name = test_name,
               source_data_table = source_table_name,
               data_filter = ifelse(is.na(data_filter), NA_character_,
                                   data_filter),
               lhs_var = lhs_var,
               rhs_var = rhs_var,
-              rhs_category = subcat_name,
-              analysis_level = "subcategory",
+              rhs_category = NA_character_,
+              analysis_level = "overall",
               lhs_type = test_result$lhs_type,
               lhs_class = test_result$lhs_class,
               test_method = test_result$test_method,
-              n_total = NA_integer_,
-              statistic_name = NA_character_,
-              statistic_value = NA_real_,
-              df = NA_real_,
-              p_value = NA_real_,
-              lhs_group = NA_character_,
-              n_groups = NA_integer_,
-              group_n = NA_integer_,
-              group_mean = NA_real_,
-              group_median = NA_real_,
-              group_sd = NA_real_,
-              min_group_size = test_result$min_group_size,
-              error_message = subcat_result$error
-            )
-            bivariate_results_list[[length(bivariate_results_list) + 1]] <-
-              subcat_error_row
-            next
-          }
-
-          # Spearman subcategory
-          if (test_result$test_method == "spearman") {
-            subcat_row <- tibble(
-              test_name = test_name,
-              source_data_table = source_table_name,
-              data_filter = ifelse(is.na(data_filter), NA_character_,
-                                  data_filter),
-              lhs_var = lhs_var,
-              rhs_var = rhs_var,
-              rhs_category = subcat_name,
-              analysis_level = "subcategory",
-              lhs_type = test_result$lhs_type,
-              lhs_class = test_result$lhs_class,
-              test_method = test_result$test_method,
-              n_total = subcat_result$n,
-              statistic_name = "rho",
-              statistic_value = subcat_result$rho,
-              df = NA_real_,
-              p_value = subcat_result$p_value,
-              lhs_group = NA_character_,
-              n_groups = NA_integer_,
-              group_n = NA_integer_,
-              group_mean = NA_real_,
-              group_median = NA_real_,
-              group_sd = NA_real_,
+              n_total = test_result$n_total,
+              statistic_name = "chi-squared",
+              statistic_value = test_result$combined_results$kw_statistic,
+              df = test_result$combined_results$kw_df,
+              p_value = test_result$combined_results$p_value,
+              lhs_group = as.character(desc_stats[[lhs_var]][j]),
+              n_groups = test_result$combined_results$n_groups,
+              group_n = desc_stats$n[j],
+              group_mean = desc_stats$mean[j],
+              group_median = desc_stats$median[j],
+              group_sd = desc_stats$sd[j],
               min_group_size = test_result$min_group_size,
               error_message = NA_character_
             )
             bivariate_results_list[[length(bivariate_results_list) + 1]] <-
-              subcat_row
+              group_row
+          }
+        }
 
-          } else if (test_result$test_method == "kruskal_wallis") {
-            # Kruskal-Wallis subcategory - one row per group
-            desc_stats_sub <- subcat_result$descriptive_stats
+        # Process subcategory results
+        if (length(test_result$subcategory_results) > 0) {
+          for (subcat_name in names(test_result$subcategory_results)) {
+            subcat_result <- test_result$subcategory_results[[subcat_name]]
 
-            for (k in seq_len(nrow(desc_stats_sub))) {
-              subcat_group_row <- tibble(
+            # Handle subcategory errors
+            if (!is.null(subcat_result$error)) {
+              subcat_error_row <- tibble(
+                test_name = test_name,
+                source_data_table = source_table_name,
+                data_filter = ifelse(is.na(data_filter), NA_character_,
+                                    data_filter),
+                lhs_var = lhs_var,
+                rhs_var = rhs_var,
+                rhs_category = subcat_name,
+                analysis_level = "subcategory",
+                lhs_type = test_result$lhs_type,
+                lhs_class = test_result$lhs_class,
+                test_method = test_result$test_method,
+                n_total = NA_integer_,
+                statistic_name = NA_character_,
+                statistic_value = NA_real_,
+                df = NA_real_,
+                p_value = NA_real_,
+                lhs_group = NA_character_,
+                n_groups = NA_integer_,
+                group_n = NA_integer_,
+                group_mean = NA_real_,
+                group_median = NA_real_,
+                group_sd = NA_real_,
+                min_group_size = test_result$min_group_size,
+                error_message = subcat_result$error
+              )
+              bivariate_results_list[[length(bivariate_results_list) + 1]] <-
+                subcat_error_row
+              next
+            }
+
+            # Spearman subcategory
+            if (test_result$test_method == "spearman") {
+              subcat_row <- tibble(
                 test_name = test_name,
                 source_data_table = source_table_name,
                 data_filter = ifelse(is.na(data_filter), NA_character_,
@@ -1124,72 +1090,106 @@ if(run.bivariate.tests){
                 lhs_class = test_result$lhs_class,
                 test_method = test_result$test_method,
                 n_total = subcat_result$n,
-                statistic_name = "chi-squared",
-                statistic_value = subcat_result$kw_statistic,
+                statistic_name = "rho",
+                statistic_value = subcat_result$rho,
                 df = NA_real_,
                 p_value = subcat_result$p_value,
-                lhs_group = as.character(desc_stats_sub[[lhs_var]][k]),
-                n_groups = subcat_result$n_groups,
-                group_n = desc_stats_sub$n[k],
-                group_mean = desc_stats_sub$mean[k],
-                group_median = desc_stats_sub$median[k],
-                group_sd = desc_stats_sub$sd[k],
+                lhs_group = NA_character_,
+                n_groups = NA_integer_,
+                group_n = NA_integer_,
+                group_mean = NA_real_,
+                group_median = NA_real_,
+                group_sd = NA_real_,
                 min_group_size = test_result$min_group_size,
                 error_message = NA_character_
               )
               bivariate_results_list[[length(bivariate_results_list) + 1]] <-
-                subcat_group_row
+                subcat_row
+
+            } else if (test_result$test_method == "kruskal_wallis") {
+              # Kruskal-Wallis subcategory - one row per group
+              desc_stats_sub <- subcat_result$descriptive_stats
+
+              for (k in seq_len(nrow(desc_stats_sub))) {
+                subcat_group_row <- tibble(
+                  test_name = test_name,
+                  source_data_table = source_table_name,
+                  data_filter = ifelse(is.na(data_filter), NA_character_,
+                                      data_filter),
+                  lhs_var = lhs_var,
+                  rhs_var = rhs_var,
+                  rhs_category = subcat_name,
+                  analysis_level = "subcategory",
+                  lhs_type = test_result$lhs_type,
+                  lhs_class = test_result$lhs_class,
+                  test_method = test_result$test_method,
+                  n_total = subcat_result$n,
+                  statistic_name = "chi-squared",
+                  statistic_value = subcat_result$kw_statistic,
+                  df = NA_real_,
+                  p_value = subcat_result$p_value,
+                  lhs_group = as.character(desc_stats_sub[[lhs_var]][k]),
+                  n_groups = subcat_result$n_groups,
+                  group_n = desc_stats_sub$n[k],
+                  group_mean = desc_stats_sub$mean[k],
+                  group_median = desc_stats_sub$median[k],
+                  group_sd = desc_stats_sub$sd[k],
+                  min_group_size = test_result$min_group_size,
+                  error_message = NA_character_
+                )
+                bivariate_results_list[[length(bivariate_results_list) + 1]] <-
+                  subcat_group_row
+              }
             }
           }
         }
       }
-    }
 
-    # Combine all rows into single tibble
-    bivariate.results.tb <- bind_rows(bivariate_results_list)
+      # Combine all rows into single tibble
+      bivariate.results.tb <- bind_rows(bivariate_results_list)
 
-  # EXPORT BIVARIATE RESULTS -------------------------------------------
-  export.bivariate.results <- TRUE
+    # EXPORT BIVARIATE RESULTS -------------------------------------------
+    export.bivariate.results <- TRUE
 
-  if (export.bivariate.results) {
-    # DEFINE & CREATE OUTPUT DIRECTORY FOR BIVARIATE TESTS
-    bv.output.base.name <-
-      Sys.time() %>%
-      gsub(":",".",.)
+    if (export.bivariate.results) {
+      # DEFINE & CREATE OUTPUT DIRECTORY FOR BIVARIATE TESTS
+      bv.output.base.name <-
+        Sys.time() %>%
+        gsub(":",".",.)
 
-    bv.output.dir <-
-      paste(
-        wd,
-        "/outputs/",
-        bv.output.base.name,
-        "_bv.tests/",
-        sep = ""
+      bv.output.dir <-
+        paste(
+          wd,
+          "/outputs/",
+          bv.output.base.name,
+          "_bv.tests/",
+          sep = ""
+        )
+
+      if(bv.output.dir %>% dir.exists %>% not){
+        dir.create(bv.output.dir, recursive = TRUE)
+      }
+
+      # WRITE BIVARIATE RESULTS TO CSV
+      bv.output.file.path <-
+        paste(
+          bv.output.dir,
+          "bivariate_test_results_",
+          Sys.Date(),
+          ".csv",
+          sep = ""
+        )
+
+      write.csv(
+        bivariate.results.tb,
+        file = bv.output.file.path,
+        row.names = FALSE,
+        na = ""
       )
 
-    if(bv.output.dir %>% dir.exists %>% not){
-      dir.create(bv.output.dir, recursive = TRUE)
+      cat("Bivariate test results saved at:", bv.output.file.path, "\n")
     }
-
-    # WRITE BIVARIATE RESULTS TO CSV
-    bv.output.file.path <-
-      paste(
-        bv.output.dir,
-        "bivariate_test_results_",
-        Sys.Date(),
-        ".csv",
-        sep = ""
-      )
-
-    write.csv(
-      bivariate.results.tb,
-      file = bv.output.file.path,
-      row.names = FALSE,
-      na = ""
-    )
-
-    cat("Bivariate test results saved at:", bv.output.file.path, "\n")
   }
-}
 
 
 # 5-REGRESSIONS -------------------------------------------------------------------------------
@@ -1208,7 +1208,7 @@ if(run.bivariate.tests){
       var_config <- list(
         mean_awareness = list(exclude = c(), base = NA),
         age = list(exclude = c(), base = NA),
-        sex = list(exclude = c(), base = "Male"),
+        sex = list(exclude = c("Prefer not to say"), base = "Male"),
         ethnicity = list(exclude = c(), base = "White"),
         nationality.native = list(exclude = c(), base = NA),
         language.native = list(exclude = c(), base = NA),
@@ -1295,4 +1295,44 @@ if(run.bivariate.tests){
                     data = regression_data.tb)
     
     cat("MODEL SUMMARY:\n") # Display summary
-    print(summary(lm_model1))
+
+    # Get the summary object
+    model_summary <- summary(lm_model1)
+
+    # Modify coefficient names to add underscores between variable names and values
+    coef_names <- rownames(model_summary$coefficients)
+
+    # Create a function to add underscores
+    add_underscores_to_coefs <- function(coef_name) {
+      # Skip intercept
+      if (coef_name == "(Intercept)") {
+        return(coef_name)
+      }
+
+      # Sort variable names by length (longest first) to match compound names first
+      var_names_sorted <- names(var_config)[order(-nchar(names(var_config)))]
+
+      # For each variable in var_config, check if coef_name starts with it
+      for (var_name in var_names_sorted) {
+        if (startsWith(coef_name, var_name)) {
+          # Extract the value part (everything after the variable name)
+          value_part <- substring(coef_name, nchar(var_name) + 1)
+
+          # If there's a value part, add underscore
+          if (nchar(value_part) > 0) {
+            return(paste0(var_name, "_", value_part))
+          } else {
+            return(coef_name)  # No value part (e.g., continuous variable)
+          }
+        }
+      }
+
+      return(coef_name)  # No match found, return original
+    }
+
+    # Apply the function to all coefficient names
+    new_coef_names <- sapply(coef_names, add_underscores_to_coefs, USE.NAMES = FALSE)
+    rownames(model_summary$coefficients) <- new_coef_names
+
+    # Print the modified summary
+    print(model_summary)
