@@ -27,7 +27,7 @@
     library(lubridate)
     library(openxlsx2)
     #library(MASS)         # For polr (proportional odds logistic regression)
-    #library(ggplot2)
+    library(ggplot2)
     #library(ggpubr)       # For statistical plots
     #library(psych)        # For descriptive stats
     #library(Hmisc)        # For rcorr if needed
@@ -1336,3 +1336,81 @@
 
     # Print the modified summary
     print(model_summary)
+
+  # STEP 2: COEFFICIENT PLOT
+
+    # Extract coefficient data for plotting
+    coef_data <- tibble(
+      variable = new_coef_names,
+      estimate = model_summary$coefficients[, "Estimate"],
+      std_error = model_summary$coefficients[, "Std. Error"],
+      p_value = model_summary$coefficients[, "Pr(>|t|)"]
+    ) %>%
+      filter(variable != "(Intercept)") %>%  # Remove intercept
+      mutate(
+        # Calculate 95% confidence intervals
+        ci_lower = estimate - 1.96 * std_error,
+        ci_upper = estimate + 1.96 * std_error,
+        # Determine significance for coloring
+        significance = case_when(
+          p_value < 0.001 ~ "p < 0.001",
+          p_value < 0.01 ~ "p < 0.01",
+          p_value < 0.05 ~ "p < 0.05",
+          p_value < 0.1 ~ "p < 0.1",
+          TRUE ~ "Not significant"
+        ),
+        # Make significance an ordered factor for legend
+        significance = factor(
+          significance,
+          levels = c("p < 0.001", "p < 0.01", "p < 0.05", "p < 0.1",
+                    "Not significant")
+        )
+      ) %>%
+      arrange(estimate)  # Sort by coefficient value
+
+    # Reorder variable factor by estimate for plotting
+    coef_data$variable <- factor(coef_data$variable,
+                                 levels = coef_data$variable)
+
+    # Create the coefficient plot
+    coef_plot <- ggplot(coef_data, aes(x = estimate, y = variable)) +
+      # Add vertical line at zero
+      geom_vline(xintercept = 0, linetype = "dashed",
+                color = "gray50", linewidth = 0.5) +
+      # Add confidence interval lines
+      geom_segment(aes(x = ci_lower, xend = ci_upper,
+                      y = variable, yend = variable),
+                  color = "gray40", linewidth = 0.8) +
+      # Add coefficient point estimate
+      geom_point(aes(color = significance), size = 3) +
+      # Color scale for significance levels
+      scale_color_manual(
+        values = c(
+          "p < 0.001" = "#D32F2F",
+          "p < 0.01" = "#F57C00",
+          "p < 0.05" = "#FBC02D",
+          "p < 0.1" = "#AFB42B",
+          "Not significant" = "gray60"
+        ),
+        name = "Significance"
+      ) +
+      # Labels and theme
+      labs(
+        title = "Regression Coefficients: Predictors of Mean Awareness",
+        subtitle = paste0("n = ", nrow(regression_data.tb),
+                         " | Points show estimates with 95% confidence intervals"),
+        x = "Coefficient Estimate",
+        y = NULL
+      ) +
+      theme_minimal(base_size = 11) +
+      theme(
+        plot.title = element_text(face = "bold", size = 13),
+        plot.subtitle = element_text(size = 10, color = "gray30"),
+        legend.position = "right",
+        panel.grid.major.y = element_line(color = "gray90"),
+        panel.grid.minor = element_blank(),
+        axis.text.y = element_text(size = 9)
+      )
+
+    # Display the plot
+    print(coef_plot)
