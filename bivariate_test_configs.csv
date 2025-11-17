@@ -1,7 +1,0 @@
-test_name,source_data_table,rhs_var,lhs_var,data_filter,questions_config,rhs_category_var,use_subcategories,verbose
-awareness_by_age,awareness.tb,value.num,age,NA,questions.tb,category,TRUE,TRUE
-awareness_by_sex,awareness.tb,value.num,sex,NA,questions.tb,category,TRUE,TRUE
-awareness_by_political_USA,awareness.tb,value.num,political.affiliation,country.of.residence == "United States",questions.tb,category,TRUE,TRUE
-awareness_by_political_UK,awareness.tb,value.num,political.affiliation,country.of.residence == "United Kingdom",questions.tb,category,TRUE,TRUE
-support_by_nationality,support.reaction.tb,value.num,nationality.native,NA,questions.tb,category,TRUE,TRUE
-decision_by_ethnicity,decision.factors.tb,value.num,ethnicity,NA,questions.tb,category,TRUE,TRUE

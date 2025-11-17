@@ -1311,7 +1311,29 @@
         # For wide data, ensure all variables exist
         missing_vars <- setdiff(all_vars, names(source_data))
         if (length(missing_vars) > 0) {
-          stop(paste("Variables not found in data:", paste(missing_vars, collapse = ", ")))
+          error_msg <- paste0(
+            "\n\n",
+            "================================================================================\n",
+            "CONFIGURATION ERROR: Missing Variables\n",
+            "================================================================================\n\n",
+            "The following variable(s) specified in your regression config do not exist\n",
+            "in the data source '", data_source_name, "':\n\n",
+            "  Missing: ", paste(missing_vars, collapse = ", "), "\n\n",
+            "ACTION REQUIRED:\n",
+            "  1. Open the Google Sheets regression config tab:\n",
+            "     https://docs.google.com/spreadsheets/d/1dcMT2lv9TBz_MPeq6jEMGD7H2Qn3FX-fLMEjc9d5_9Y\n",
+            "  2. Find model_id: ", config_row$model_id, "\n",
+            "  3. Check the 'predictors' and 'control_vars' columns\n",
+            "  4. Fix or remove: ", paste(missing_vars, collapse = ", "), "\n\n",
+            "Available variables in '", data_source_name, "':\n",
+            "  ", paste(head(sort(names(source_data)), 20), collapse = ", "),
+            ifelse(ncol(source_data) > 20, paste0("\n  ... and ", ncol(source_data) - 20, " more"), ""),
+            "\n\n",
+            "TIP: Use RStudio's View() function to inspect the full data:\n",
+            "  View(", data_source_name, ")\n\n",
+            "================================================================================\n"
+          )
+          stop(error_msg)
         }
 
         # Create regression dataset
@@ -2916,6 +2938,11 @@
         )
       }, error = function(e) {
         results$errors$data_prep <<- e$message
+        if (verbose) {
+          cat("\n")
+          cat(e$message)
+          cat("\n")
+        }
         return(NULL)
       })
 
@@ -2988,6 +3015,9 @@
           )
         }, error = function(e) {
           results$errors[[paste0("pom_", link)]] <<- e$message
+          if (verbose) {
+            cat("  ERROR fitting POM with", link, "link:", e$message, "\n")
+          }
           return(NULL)
         })
 
@@ -2998,6 +3028,189 @@
 
       if (length(pom_results_by_link) == 0) {
         results$status <- "FAILED: POM fitting"
+        if (verbose) {
+          cat("\n")
+          cat("================================================================================\n")
+          cat("POM FITTING ERROR\n")
+          cat("================================================================================\n\n")
+          cat("All link functions failed to fit the proportional odds model.\n\n")
+
+          # DIAGNOSTIC CHECKS
+          cat("DIAGNOSTIC CHECKS:\n")
+          cat(strrep("-", 80), "\n\n", sep = "")
+
+          # Check 1: Sample size
+          min_n_threshold <- 30  # Generally recommended minimum
+          min_n_per_category <- 10
+
+          outcome_counts <- data_prep$data %>%
+            count(.data[[data_prep$outcome_var]]) %>%
+            arrange(n)
+
+          n_categories <- nrow(outcome_counts)
+          min_category_n <- min(outcome_counts$n)
+
+          cat("1. SAMPLE SIZE CHECK\n")
+          cat("   Total observations: n =", data_prep$n_final, "\n")
+          cat("   Minimum recommended: n ≥", min_n_threshold, "\n")
+          if (data_prep$n_final < min_n_threshold) {
+            cat("   ✗ INSUFFICIENT DATA - Sample size below recommended minimum\n")
+          } else {
+            cat("   ✓ Sample size adequate\n")
+          }
+          cat("\n")
+
+          # Check 2: Outcome variation
+          cat("2. OUTCOME VARIATION CHECK\n")
+          cat("   Outcome variable:", data_prep$outcome_var, "\n")
+          cat("   Number of categories:", n_categories, "\n")
+          cat("   Category distribution:\n")
+          for (i in seq_len(nrow(outcome_counts))) {
+            pct <- round(100 * outcome_counts$n[i] / data_prep$n_final, 1)
+            cat("     ", outcome_counts[[data_prep$outcome_var]][i], ": n =",
+                outcome_counts$n[i], paste0("(", pct, "%)"), "\n")
+          }
+          cat("   Minimum per category: n =", min_category_n,
+              "(threshold: ≥", min_n_per_category, ")\n")
+
+          if (n_categories < 2) {
+            cat("   ✗ NO VARIATION - All observations in one category\n")
+          } else if (min_category_n < min_n_per_category) {
+            cat("   ✗ INSUFFICIENT VARIATION - Some categories have too few observations\n")
+          } else {
+            cat("   ✓ Outcome variation adequate\n")
+          }
+          cat("\n")
+
+          # Check 3: Predictor variance
+          cat("3. PREDICTOR VARIANCE CHECK\n")
+          zero_var_predictors <- c()
+          low_var_predictors <- c()
+
+          for (pred in data_prep$predictors) {
+            # Check unique values (removing NA)
+            unique_vals <- length(unique(na.omit(data_prep$data[[pred]])))
+
+            if (unique_vals == 1) {
+              zero_var_predictors <- c(zero_var_predictors, pred)
+              # Show the single value for context
+              single_val <- unique(na.omit(data_prep$data[[pred]]))
+              cat("   ", pred, ": unique values =", unique_vals,
+                  "✗ ZERO VARIANCE (all =", single_val, ")\n")
+            } else if (unique_vals == 2) {
+              # Check if binary has extreme imbalance
+              val_counts <- table(data_prep$data[[pred]])
+              min_prop <- min(val_counts) / sum(val_counts)
+              if (min_prop < 0.05) {
+                low_var_predictors <- c(low_var_predictors, pred)
+                cat("   ", pred, ": unique values =", unique_vals,
+                    "⚠ LOW VARIANCE (", round(min_prop * 100, 1),
+                    "% in minority)\n", sep = "")
+              } else {
+                cat("   ", pred, ": unique values =", unique_vals, "✓\n")
+              }
+            } else {
+              cat("   ", pred, ": unique values =", unique_vals, "✓\n")
+            }
+          }
+
+          if (length(zero_var_predictors) > 0) {
+            cat("\n   ✗ ZERO VARIANCE PREDICTORS FOUND: ",
+                paste(zero_var_predictors, collapse = ", "), "\n")
+            cat("   EXPLANATION: These variables have only one unique value after\n")
+            cat("                filtering and NA removal. This may occur because:\n")
+            cat("                • Filter conditions excluded variation\n")
+            cat("                • All observations in this category have same value\n")
+            cat("                • Variable is constant for this subset of data\n")
+            cat("   ACTION: Remove these variables from model or adjust filters\n")
+          } else if (length(low_var_predictors) > 0) {
+            cat("\n   ⚠ Low variance predictors: ",
+                paste(low_var_predictors, collapse = ", "), "\n")
+            cat("   WARNING: Extreme imbalance may cause convergence issues\n")
+          } else {
+            cat("   ✓ All predictors have sufficient variance\n")
+          }
+          cat("\n")
+
+          # Check 4: Separation issues
+          cat("4. SEPARATION CHECK\n")
+          cat("   Testing for perfect/quasi-complete separation...\n")
+
+          # Simple check: For each categorical predictor, see if any level
+          # perfectly predicts the outcome
+          separation_issues <- c()
+
+          for (pred in data_prep$predictors) {
+            if (!is.numeric(data_prep$data[[pred]]) ||
+                length(unique(data_prep$data[[pred]])) <= 5) {
+              # Treat as categorical
+              cross_tab <- table(data_prep$data[[pred]],
+                                data_prep$data[[data_prep$outcome_var]])
+
+              # Check if any row (predictor level) has all observations in one outcome category
+              for (i in seq_len(nrow(cross_tab))) {
+                if (sum(cross_tab[i, ] > 0) == 1) {
+                  separation_issues <- c(separation_issues,
+                    paste0(pred, " (level '", rownames(cross_tab)[i],
+                           "' → outcome '", colnames(cross_tab)[which(cross_tab[i, ] > 0)], "')"))
+                }
+              }
+            }
+          }
+
+          if (length(separation_issues) > 0) {
+            cat("   ✗ PERFECT SEPARATION DETECTED:\n")
+            for (issue in separation_issues) {
+              cat("     •", issue, "\n")
+            }
+          } else {
+            cat("   ✓ No obvious separation detected\n")
+            cat("   Note: Quasi-complete separation may still exist\n")
+          }
+          cat("\n")
+
+          # Original error messages
+          cat(strrep("-", 80), "\n\n", sep = "")
+          cat("UNDERLYING ERROR MESSAGES:\n")
+          for (err_name in names(results$errors)) {
+            if (grepl("^pom_", err_name)) {
+              cat("  ", err_name, ":\n    ", results$errors[[err_name]], "\n")
+            }
+          }
+          cat("\n")
+
+          # Recommendations based on findings
+          cat(strrep("-", 80), "\n\n", sep = "")
+          cat("RECOMMENDED ACTIONS:\n")
+
+          if (data_prep$n_final < min_n_threshold) {
+            cat("  • Increase sample size or relax filter conditions\n")
+          }
+
+          if (n_categories < 2 || min_category_n < min_n_per_category) {
+            cat("  • Collapse outcome categories with low counts\n")
+            cat("  • Check filter conditions - may be excluding too much data\n")
+          }
+
+          if (length(zero_var_predictors) > 0) {
+            cat("  • Remove zero-variance predictors:",
+                paste(zero_var_predictors, collapse = ", "), "\n")
+          }
+
+          if (length(low_var_predictors) > 0) {
+            cat("  • Consider removing highly imbalanced predictors:",
+                paste(low_var_predictors, collapse = ", "), "\n")
+          }
+
+          if (length(separation_issues) > 0) {
+            cat("  • Remove predictors causing perfect separation\n")
+            cat("  • Or: Collapse predictor categories to reduce separation\n")
+          }
+
+          cat("  • Try alternative regression methods (multinomial logistic, etc.)\n")
+          cat("  • Consult with a statistician about your specific data structure\n\n")
+          cat("================================================================================\n\n")
+        }
         return(results)
       }
 
@@ -3287,6 +3500,9 @@
     run_implemented_models <- TRUE
 
     if (run_implemented_models) {
+      # Start timer for regression execution
+      regression_start_time <- Sys.time()
+
       cat("\n=== RUNNING ALL IMPLEMENTED MODELS ===\n\n")
 
       # Filter for models with implement = TRUE
@@ -3302,6 +3518,10 @@
           cat("  -", models_to_run$model_id[i], ":", models_to_run$model_label[i], "\n")
         }
         cat("\n")
+
+        # Create shared output directory for this run
+        run_output_dir <- create_timestamped_output_dir("outputs")
+        cat("Output directory:", run_output_dir, "\n\n")
 
         # Store results for all models
         all_results <- list()
@@ -3346,22 +3566,32 @@
           # Store results
           all_results[[model_id]] <- current_results
 
-          # Export PDF report
+          # Export PDF report (only if at least one analysis succeeded)
           if (current_results$is_split) {
-            # Multi-category report
-            pdf_path <- export_multi_category_pdf_report(
-              split_results = current_results,
-              config_row = current_model,
-              verbose = TRUE
-            )
+            # Multi-category report - check if any categories succeeded
+            success_count <- sum(sapply(current_results$results,
+                                       function(r) r$status == "SUCCESS"))
+            if (success_count > 0) {
+              pdf_path <- export_multi_category_pdf_report(
+                split_results = current_results,
+                config_row = current_model,
+                output_dir = run_output_dir,
+                verbose = TRUE
+              )
+            } else {
+              cat("No PDF generated - all categories failed\n")
+            }
           } else {
             # Single analysis report (only if successful)
             single_result <- current_results$results[[1]]
             if (single_result$status == "SUCCESS") {
               pdf_path <- export_pdf_report(
                 results = single_result,
+                output_dir = run_output_dir,
                 verbose = TRUE
               )
+            } else {
+              cat("No PDF generated - analysis failed\n")
             }
           }
 
@@ -3494,15 +3724,61 @@
             if (result$is_split) {
               all_failed <- all(sapply(result$results, function(x) x$status != "SUCCESS"))
               if (all_failed) {
+                # Get error details from first failed category
+                first_failed <- result$results[[1]]
                 cat("  ✗", model_id, "\n")
+                if (!is.null(first_failed$errors) && length(first_failed$errors) > 0) {
+                  cat("    Reason:", first_failed$status, "\n")
+                  # Check if this is a configuration error (missing variables)
+                  if (!is.null(first_failed$errors$data_prep) &&
+                      grepl("CONFIGURATION ERROR", first_failed$errors$data_prep)) {
+                    cat("    ⚠  Configuration issue detected - see error details above\n")
+                  }
+                }
               }
             } else {
               if (result$results[[1]]$status != "SUCCESS") {
                 cat("  ✗", model_id, "\n")
+                if (!is.null(result$results[[1]]$errors) && length(result$results[[1]]$errors) > 0) {
+                  cat("    Reason:", result$results[[1]]$status, "\n")
+                  if (!is.null(result$results[[1]]$errors$data_prep) &&
+                      grepl("CONFIGURATION ERROR", result$results[[1]]$errors$data_prep)) {
+                    cat("    ⚠  Configuration issue detected - see error details above\n")
+                  }
+                }
               }
             }
           }
           cat("\n")
+          cat("ACTION REQUIRED FOR FAILED MODELS:\n")
+          cat("  • Review the error messages above for each failed model\n")
+          cat("  • Fix configuration issues in the Google Sheets regression.configs tab\n")
+          cat("  • Re-run the script after making corrections\n\n")
         }
+
+        # Display execution time
+        regression_end_time <- Sys.time()
+        regression_duration <- as.numeric(difftime(regression_end_time, regression_start_time, units = "secs"))
+
+        # Format duration in human-readable format
+        if (regression_duration < 60) {
+          duration_str <- sprintf("%.1f seconds", regression_duration)
+        } else if (regression_duration < 3600) {
+          minutes <- floor(regression_duration / 60)
+          seconds <- regression_duration %% 60
+          duration_str <- sprintf("%d min %.0f sec", minutes, seconds)
+        } else {
+          hours <- floor(regression_duration / 3600)
+          minutes <- floor((regression_duration %% 3600) / 60)
+          duration_str <- sprintf("%d hr %d min", hours, minutes)
+        }
+
+        cat(strrep("-", 80), "\n", sep = "")
+        cat("EXECUTION TIME\n")
+        cat(strrep("-", 80), "\n", sep = "")
+        cat("Total time:", duration_str, "\n")
+        cat("Started:", format(regression_start_time, "%Y-%m-%d %H:%M:%S"), "\n")
+        cat("Finished:", format(regression_end_time, "%Y-%m-%d %H:%M:%S"), "\n")
+        cat(strrep("-", 80), "\n\n", sep = "")
       }
     }
