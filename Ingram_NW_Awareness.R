@@ -1218,7 +1218,7 @@
 
 # 4B-REGRESSIONS
 
-  #Regression Helper Functions ----
+  # REGRESSION HELPER FUNCTIONS ----
 
     # CALCULATE VIF (Variance Inflation Factor) FOR MULTICOLLINEARITY DETECTION
       calculate_vif <- function(model) {
@@ -1241,8 +1241,10 @@
 
         for (i in seq_len(ncol(X))) {
           # Regress each predictor on all other predictors
-          formula_str <- paste(colnames(X)[i], "~",
-                              paste(colnames(X)[-i], collapse = " + "))
+          # Wrap variable names in backticks to handle spaces and special characters
+          lhs <- paste0("`", colnames(X)[i], "`")
+          rhs <- paste(paste0("`", colnames(X)[-i], "`"), collapse = " + ")
+          formula_str <- paste(lhs, "~", rhs)
           r_squared <- summary(lm(as.formula(formula_str), data = as.data.frame(X)))$r.squared
 
           # VIF = 1 / (1 - R²)
@@ -1273,18 +1275,33 @@
         source_data <- get(data_source_name)
 
         # Apply filter conditions if specified
-        if (!is.na(config_row$filter_conditions) && config_row$filter_conditions != "") {
+        if (!is.null(config_row$filter_conditions) &&
+            !is.na(config_row$filter_conditions) &&
+            is.character(config_row$filter_conditions) &&
+            nchar(trimws(config_row$filter_conditions)) > 0) {
           source_data <- source_data %>%
             filter(eval(parse(text = config_row$filter_conditions)))
         }
 
         # Get outcome and predictor variables
         outcome_var <- config_row$outcome_var
-        predictors <- strsplit(config_row$predictors, ",\\s*")[[1]]
+
+        # Parse predictors with type checking
+        if (!is.null(config_row$predictors) &&
+            !is.na(config_row$predictors) &&
+            is.character(config_row$predictors) &&
+            nchar(trimws(config_row$predictors)) > 0) {
+          predictors <- trimws(strsplit(config_row$predictors, ",")[[1]])
+        } else {
+          stop("predictors must be specified in config")
+        }
 
         # Add control variables if specified
-        if (!is.na(config_row$control_vars) && config_row$control_vars != "") {
-          control_vars <- strsplit(config_row$control_vars, ",\\s*")[[1]]
+        if (!is.null(config_row$control_vars) &&
+            !is.na(config_row$control_vars) &&
+            is.character(config_row$control_vars) &&
+            nchar(trimws(config_row$control_vars)) > 0) {
+          control_vars <- trimws(strsplit(config_row$control_vars, ",")[[1]])
           predictors <- c(predictors, control_vars)
         }
 
@@ -1302,9 +1319,23 @@
           select(all_of(all_vars)) %>%
           drop_na()  # Remove rows with any NA in the model variables
 
+        # Extract outcome label for better reporting
+        # If outcome is generic "value.num" and data has "category" column, use category name
+        outcome_label <- outcome_var
+        if (outcome_var == "value.num" && "category" %in% names(source_data)) {
+          unique_categories <- unique(source_data$category)
+          if (length(unique_categories) == 1) {
+            outcome_label <- as.character(unique_categories[1])
+          } else if (length(unique_categories) > 1) {
+            # Multiple categories - use data source name as label
+            outcome_label <- gsub("\\.tb$", "", data_source_name)
+          }
+        }
+
         return(list(
           data = regression_data,
           outcome_var = outcome_var,
+          outcome_label = outcome_label,  # Human-readable label
           predictors = predictors,
           n_original = nrow(source_data),
           n_final = nrow(regression_data),
@@ -1318,8 +1349,11 @@
         formula_str <- paste(outcome_var, "~", paste(predictors, collapse = " + "))
 
         # Add interactions if specified
-        if (!is.na(interaction_terms) && interaction_terms != "") {
-          interactions <- strsplit(interaction_terms, ",\\s*")[[1]]
+        if (!is.null(interaction_terms) &&
+            !is.na(interaction_terms) &&
+            is.character(interaction_terms) &&
+            nchar(trimws(interaction_terms)) > 0) {
+          interactions <- trimws(strsplit(interaction_terms, ",")[[1]])
           # Replace * with : for interaction notation in formula
           interactions <- gsub("\\*", ":", interactions)
           formula_str <- paste(formula_str, "+", paste(interactions, collapse = " + "))
@@ -1725,7 +1759,7 @@
         return(residuals_tb)
       }
 
-    # TEST BRANT TEST FUNCTION
+    # BRANT TEST FUNCTION
       test_brant <- FALSE
 
       # NOTE: The brant package has compatibility issues in some environments.
@@ -1858,10 +1892,7 @@
         }
       }
 
-
-  #Regressions ----
-
-  # SECTION 5A: DIAGNOSTIC & VISUALIZATION FUNCTIONS ----
+  # REGRESSION DIAGNOSTIC & VISUALIZATION FUNCTIONS ----
 
     # These functions create diagnostic plots and coefficient plots for regression models
 
@@ -1996,7 +2027,8 @@
           )
 
         # Combine all plots into 2x2 panel
-        combined_plot <- grid.arrange(
+        # Use arrangeGrob to create without displaying
+        combined_plot <- arrangeGrob(
           plot1, plot2, plot3, plot4,
           ncol = 2, nrow = 2,
           top = textGrob(
@@ -2009,30 +2041,1232 @@
       }
 
     # PLOT POM COEFFICIENTS (forest plot)
-      # TODO: Implement plot_pom_coefficients(pom_result, title)
-      # Will create forest plot showing odds ratios with confidence intervals
+      plot_pom_coefficients <- function(pom_result, plot_title = NULL) {
+        # Create forest plot showing odds ratios with confidence intervals
+        #
+        # Args:
+        #   pom_result: Output from fit_pom() containing coefficients with ORs and CIs
+        #   plot_title: Optional title for the plot
+        #
+        # Returns:
+        #   A ggplot object (forest plot)
+
+        # Load required packages
+        if (!requireNamespace("ggplot2", quietly = TRUE)) {
+          stop("Package 'ggplot2' is required for plotting.")
+        }
+        library(ggplot2)
+
+        # Extract coefficients with odds ratios
+        coef_data <- pom_result$coefficients
+
+        # Check if we have the required columns
+        required_cols <- c("variable", "odds_ratio", "ci_lower_or", "ci_upper_or", "p_value")
+        if (!all(required_cols %in% names(coef_data))) {
+          stop("pom_result$coefficients must contain: variable, odds_ratio, ci_lower_or, ci_upper_or, p_value")
+        }
+
+        # Prepare data for plotting
+        plot_data <- coef_data %>%
+          mutate(
+            # Create significance indicator
+            significant = p_value < 0.05,
+            # Format labels with OR and CI
+            label_text = sprintf("%.2f [%.2f, %.2f]", odds_ratio, ci_lower_or, ci_upper_or),
+            # Order variables by odds ratio for better visualization
+            variable = reorder(variable, odds_ratio)
+          )
+
+        # Determine plot limits (symmetric on log scale around 1)
+        log_or <- log(plot_data$odds_ratio)
+        log_lower <- log(plot_data$ci_lower_or)
+        log_upper <- log(plot_data$ci_upper_or)
+        log_range <- max(abs(c(log_lower, log_upper)))
+
+        # Set x-axis limits (symmetric on log scale)
+        x_limits <- exp(c(-log_range * 1.2, log_range * 1.2))
+
+        # Create title
+        main_title <- if (!is.null(plot_title)) {
+          plot_title
+        } else {
+          paste("Odds Ratios with",
+                paste0(pom_result$model_stats$confidence_level * 100, "%"),
+                "Confidence Intervals")
+        }
+
+        # Determine x position for labels (use fixed position based on max CI)
+        max_x_label <- max(plot_data$ci_upper_or) * 1.1
+
+        # Create forest plot
+        forest_plot <- ggplot(plot_data, aes(x = odds_ratio, y = variable)) +
+          # Reference line at OR = 1
+          geom_vline(xintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
+
+          # Confidence interval lines (use geom_errorbar with orientation)
+          geom_errorbar(aes(xmin = ci_lower_or, xmax = ci_upper_or, color = significant),
+                       width = 0.3, linewidth = 0.8, orientation = "y") +
+
+          # Point estimates
+          geom_point(aes(color = significant, shape = significant), size = 3) +
+
+          # Add OR and CI labels on the right
+          geom_text(aes(label = label_text), x = max_x_label,
+                   hjust = 0, size = 3) +
+
+          # Styling
+          scale_x_continuous(
+            trans = "log",
+            breaks = c(0.25, 0.5, 1, 2, 4),
+            labels = c("0.25", "0.5", "1.0", "2.0", "4.0"),
+            limits = x_limits
+          ) +
+          scale_color_manual(
+            values = c("TRUE" = "#D55E00", "FALSE" = "#0072B2"),
+            labels = c("TRUE" = "p < 0.05", "FALSE" = "p ≥ 0.05"),
+            name = "Significance"
+          ) +
+          scale_shape_manual(
+            values = c("TRUE" = 16, "FALSE" = 1),
+            labels = c("TRUE" = "p < 0.05", "FALSE" = "p ≥ 0.05"),
+            name = "Significance"
+          ) +
+          labs(
+            title = main_title,
+            x = "Odds Ratio (log scale)",
+            y = ""
+          ) +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+            axis.title.x = element_text(size = 10),
+            axis.text.y = element_text(size = 10),
+            axis.text.x = element_text(size = 9),
+            legend.position = "bottom",
+            legend.title = element_text(size = 9),
+            legend.text = element_text(size = 8),
+            panel.grid.major.y = element_line(color = "gray90"),
+            panel.grid.minor = element_blank()
+          )
+
+        return(forest_plot)
+      }
 
 
-  # SECTION 5B: SINGLE-MODEL ORCHESTRATION FUNCTIONS ----
+  # EXPORT FUNCTIONS ----
 
-    # These functions orchestrate the complete analysis for a single regression model
+    # CREATE TIMESTAMPED OUTPUT DIRECTORY
+      create_timestamped_output_dir <- function(base_dir = "outputs") {
+        # Create timestamped subdirectory for regression results
+        # Matches pattern: YYYY-MM-DD HH.MM.SS.microseconds
 
-    # RUN SINGLE POM ANALYSIS
-      # TODO: Implement run_single_pom_analysis(config_row)
-      # Will:
-      #   1. Prepare data using prepare_regression_data()
-      #   2. Build formula using build_formula()
-      #   3. Check cell counts
-      #   4. Fit POM using fit_pom()
-      #   5. Calculate VIF
-      #   6. Run Brant test (if available)
-      #   7. Calculate residuals
-      #   8. Generate diagnostic plots
-      #   9. Generate coefficient plot
-      #  10. Return comprehensive results object
+        timestamp <- format(Sys.time(), "%Y-%m-%d %H.%M.%OS6")
+        output_dir <- file.path(base_dir, timestamp)
+
+        if (!dir.exists(output_dir)) {
+          dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+        }
+
+        return(output_dir)
+      }
+
+    # EXPORT PDF REPORT
+      export_pdf_report <- function(results, output_dir = NULL,
+                                     filename = NULL, verbose = TRUE) {
+        # Export comprehensive PDF report of POM analysis results
+        #
+        # Args:
+        #   results: Results object from run_single_pom_analysis()
+        #   output_dir: Directory for PDF output (if NULL, creates timestamped dir)
+        #   filename: Optional custom filename (default: {model_id}_report.pdf)
+        #   verbose: Print progress messages
+        #
+        # Returns:
+        #   File path of exported PDF
+
+        if (!requireNamespace("gridExtra", quietly = TRUE)) {
+          stop("Package 'gridExtra' is required for PDF reports. Install with: install.packages('gridExtra')")
+        }
+        library(gridExtra)
+        library(grid)
+
+        # Create timestamped output directory if not specified
+        if (is.null(output_dir)) {
+          output_dir <- create_timestamped_output_dir("outputs")
+        } else if (!dir.exists(output_dir)) {
+          dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+        }
+
+        # Set filename
+        model_id <- results$model_info$model_id
+        if (is.null(filename)) {
+          filename <- paste0(model_id, "_report.pdf")
+        }
+        file_path <- file.path(output_dir, filename)
+
+        if (verbose) {
+          cat("\n========================================\n")
+          cat("GENERATING PDF REPORT:", model_id, "\n")
+          cat("========================================\n\n")
+        }
+
+        # Open PDF device (suppress display)
+        pdf(file_path, width = 8.5, height = 11, onefile = TRUE)
+
+        # Build full model specification
+        formula_str <- deparse(results$formula)
+        if (length(formula_str) > 1) {
+          formula_str <- paste(formula_str, collapse = " ")
+        }
+
+        # PAGE 1: TITLE AND MODEL INFORMATION ----
+        grid.newpage()
+
+        # Build title from outcome and predictors
+        # Use outcome_label (human-readable) if available, otherwise use outcome_var
+        outcome_name <- if (!is.null(results$data_prep$outcome_label)) {
+          results$data_prep$outcome_label
+        } else {
+          results$model_info$outcome_var
+        }
+        predictor_names <- paste(results$data_prep$predictors, collapse = " + ")
+        title_text <- paste(outcome_name, "~", predictor_names)
+
+        # Title: Model specification formula
+        grid.text(title_text,
+                  x = 0.5, y = 0.95,
+                  gp = gpar(fontsize = 14, fontface = "bold"))
+
+        # Model ID subtitle
+        grid.text(paste("Model ID:", model_id),
+                  x = 0.5, y = 0.91,
+                  gp = gpar(fontsize = 12, col = "gray30"))
+
+        # Horizontal line
+        grid.lines(x = c(0.1, 0.9), y = c(0.88, 0.88),
+                   gp = gpar(lwd = 2))
+
+        # Model Specification section
+        y_pos <- 0.83
+        grid.text("Model Specification", x = 0.1, y = y_pos,
+                  just = "left", gp = gpar(fontsize = 12, fontface = "bold"))
+        y_pos <- y_pos - 0.03
+        grid.lines(x = c(0.1, 0.9), y = c(y_pos, y_pos), gp = gpar(lwd = 1, col = "gray60"))
+
+        y_pos <- y_pos - 0.04
+        grid.text(paste("Data Source:", results$model_info$data_source),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        y_pos <- y_pos - 0.03
+        grid.text(paste("Outcome Variable:", results$model_info$outcome_var),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        y_pos <- y_pos - 0.03
+        # List all predictors explicitly (no summarizing)
+        predictor_list <- paste(results$data_prep$predictors, collapse = ", ")
+        grid.text("Predictors:", x = 0.12, y = y_pos, just = "left",
+                  gp = gpar(fontsize = 10, fontface = "bold"))
+        y_pos <- y_pos - 0.025
+        # Wrap long predictor list if needed
+        max_width <- 70
+        if (nchar(predictor_list) > max_width) {
+          words <- strsplit(predictor_list, ", ")[[1]]
+          lines <- character()
+          current_line <- ""
+          for (word in words) {
+            test_line <- if (current_line == "") word else paste(current_line, word, sep = ", ")
+            if (nchar(test_line) > max_width && current_line != "") {
+              lines <- c(lines, current_line)
+              current_line <- word
+            } else {
+              current_line <- test_line
+            }
+          }
+          if (current_line != "") lines <- c(lines, current_line)
+
+          for (line in lines) {
+            grid.text(line, x = 0.15, y = y_pos, just = "left", gp = gpar(fontsize = 9))
+            y_pos <- y_pos - 0.025
+          }
+        } else {
+          grid.text(predictor_list, x = 0.15, y = y_pos, just = "left", gp = gpar(fontsize = 9))
+          y_pos <- y_pos - 0.03
+        }
+
+        y_pos <- y_pos - 0.01
+
+        y_pos <- y_pos - 0.03
+        status_color <- ifelse(results$status == "SUCCESS", "darkgreen", "darkred")
+        grid.text(paste("Status:", results$status),
+                  x = 0.12, y = y_pos, just = "left",
+                  gp = gpar(fontsize = 10, col = status_color, fontface = "bold"))
+
+        # Sample Size section
+        y_pos <- y_pos - 0.06
+        grid.text("Sample Size", x = 0.1, y = y_pos,
+                  just = "left", gp = gpar(fontsize = 12, fontface = "bold"))
+        y_pos <- y_pos - 0.03
+        grid.lines(x = c(0.1, 0.9), y = c(y_pos, y_pos), gp = gpar(lwd = 1, col = "gray60"))
+
+        y_pos <- y_pos - 0.04
+        grid.text(paste("Original N:", format(results$data_prep$n_original, big.mark = ",")),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        y_pos <- y_pos - 0.03
+        grid.text(paste("Final N:", format(results$data_prep$n_final, big.mark = ",")),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        y_pos <- y_pos - 0.03
+        pct_dropped <- round(100 * results$data_prep$n_dropped / results$data_prep$n_original, 1)
+        grid.text(paste("Dropped:", format(results$data_prep$n_dropped, big.mark = ","),
+                       paste0("(", pct_dropped, "%)")),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        # Model Fit Statistics section
+        y_pos <- y_pos - 0.06
+        grid.text("Model Fit Statistics", x = 0.1, y = y_pos,
+                  just = "left", gp = gpar(fontsize = 12, fontface = "bold"))
+        y_pos <- y_pos - 0.03
+        grid.lines(x = c(0.1, 0.9), y = c(y_pos, y_pos), gp = gpar(lwd = 1, col = "gray60"))
+
+        y_pos <- y_pos - 0.04
+        grid.text(paste("Link Function:", results$pom_result$model_stats$link_function),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        y_pos <- y_pos - 0.03
+        grid.text(paste("AIC:", round(results$pom_result$model_stats$aic, 2)),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        y_pos <- y_pos - 0.03
+        grid.text(paste("BIC:", round(results$pom_result$model_stats$bic, 2)),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        y_pos <- y_pos - 0.03
+        grid.text(paste("Log-Likelihood:", round(results$pom_result$model_stats$log_likelihood, 2)),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        y_pos <- y_pos - 0.03
+        grid.text(paste("Number of Predictors:", results$pom_result$model_stats$n_predictors),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        y_pos <- y_pos - 0.03
+        grid.text(paste("Confidence Level:", results$pom_result$model_stats$confidence_level),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        # Link comparison if multiple links tested
+        if (nrow(results$link_comparison) > 1) {
+          y_pos <- y_pos - 0.06
+          grid.text("Link Function Comparison", x = 0.1, y = y_pos,
+                    just = "left", gp = gpar(fontsize = 12, fontface = "bold"))
+          y_pos <- y_pos - 0.03
+          grid.lines(x = c(0.1, 0.9), y = c(y_pos, y_pos), gp = gpar(lwd = 1, col = "gray60"))
+
+          y_pos <- y_pos - 0.04
+          link_table <- tableGrob(results$link_comparison,
+                                  rows = NULL,
+                                  theme = ttheme_minimal(base_size = 9))
+          grid.draw(link_table)
+          vp <- viewport(x = 0.5, y = y_pos - 0.08, width = 0.8, height = 0.15)
+          pushViewport(vp)
+          grid.draw(link_table)
+          popViewport()
+        }
+
+        # Footer
+        grid.text(paste("Report generated:", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
+                  x = 0.5, y = 0.05,
+                  gp = gpar(fontsize = 8, col = "gray50"))
+
+        # PAGE 2: COEFFICIENTS TABLE ----
+        grid.newpage()
+
+        # Title
+        grid.text("Regression Coefficients", x = 0.5, y = 0.95,
+                  gp = gpar(fontsize = 16, fontface = "bold"))
+        grid.text("Log-Odds, Odds Ratios, and Confidence Intervals",
+                  x = 0.5, y = 0.92,
+                  gp = gpar(fontsize = 11, col = "gray30"))
+        grid.lines(x = c(0.05, 0.95), y = c(0.90, 0.90), gp = gpar(lwd = 2))
+
+        # Format coefficients for display
+        coef_display <- results$pom_result$coefficients %>%
+          mutate(
+            log_odds = sprintf("%.3f", log_odds),
+            std_error = sprintf("%.3f", std_error),
+            p_value = ifelse(p_value < 0.001, "< 0.001", sprintf("%.3f", p_value)),
+            odds_ratio = sprintf("%.3f", odds_ratio),
+            ci_95 = paste0("[", sprintf("%.3f", ci_lower_or), ", ",
+                          sprintf("%.3f", ci_upper_or), "]")
+          ) %>%
+          select(variable, log_odds, std_error, p_value, odds_ratio, ci_95)
+
+        # Create table
+        coef_table <- tableGrob(coef_display,
+                                rows = NULL,
+                                theme = ttheme_minimal(
+                                  base_size = 9,
+                                  core = list(fg_params = list(hjust = 0, x = 0.05)),
+                                  colhead = list(fg_params = list(fontface = "bold"))
+                                ))
+
+        # Draw table
+        vp <- viewport(x = 0.5, y = 0.50, width = 0.90, height = 0.75)
+        pushViewport(vp)
+        grid.draw(coef_table)
+        popViewport()
+
+        # Footer
+        grid.text(paste("Model:", model_id),
+                  x = 0.5, y = 0.05,
+                  gp = gpar(fontsize = 8, col = "gray50"))
+
+        # PAGE 3: VIF DIAGNOSTICS (if available) ----
+        if (!is.null(results$vif_results)) {
+          grid.newpage()
+
+          # Title
+          grid.text("Multicollinearity Diagnostics", x = 0.5, y = 0.95,
+                    gp = gpar(fontsize = 16, fontface = "bold"))
+          grid.text("Variance Inflation Factors (VIF)", x = 0.5, y = 0.92,
+                    gp = gpar(fontsize = 11, col = "gray30"))
+          grid.lines(x = c(0.05, 0.95), y = c(0.90, 0.90), gp = gpar(lwd = 2))
+
+          # Format VIF for display
+          vif_display <- results$vif_results %>%
+            mutate(
+              vif = sprintf("%.2f", vif),
+              tolerance = sprintf("%.3f", tolerance),
+              interpretation = case_when(
+                as.numeric(vif) < 5 ~ "Low",
+                as.numeric(vif) < 10 ~ "Moderate",
+                TRUE ~ "High"
+              )
+            )
+
+          # Create table
+          vif_table <- tableGrob(vif_display,
+                                 rows = NULL,
+                                 theme = ttheme_minimal(
+                                   base_size = 10,
+                                   core = list(fg_params = list(hjust = 0, x = 0.05)),
+                                   colhead = list(fg_params = list(fontface = "bold"))
+                                 ))
+
+          # Draw table
+          vp <- viewport(x = 0.5, y = 0.65, width = 0.80, height = 0.50)
+          pushViewport(vp)
+          grid.draw(vif_table)
+          popViewport()
+
+          # Interpretation guide
+          y_pos <- 0.30
+          grid.text("VIF Interpretation Guide:", x = 0.15, y = y_pos,
+                    just = "left", gp = gpar(fontsize = 11, fontface = "bold"))
+
+          y_pos <- y_pos - 0.04
+          grid.text("VIF < 5: Low multicollinearity (acceptable)",
+                    x = 0.17, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+          y_pos <- y_pos - 0.03
+          grid.text("VIF 5-10: Moderate multicollinearity (monitor closely)",
+                    x = 0.17, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+          y_pos <- y_pos - 0.03
+          grid.text("VIF > 10: High multicollinearity (problematic)",
+                    x = 0.17, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+          # Footer
+          grid.text(paste("Model:", model_id),
+                    x = 0.5, y = 0.05,
+                    gp = gpar(fontsize = 8, col = "gray50"))
+        }
+
+        # PAGE 4: DIAGNOSTIC PLOTS ----
+        if (!is.null(results$diagnostic_plot)) {
+          grid.newpage()
+
+          # Title
+          grid.text("Model Diagnostic Plots", x = 0.5, y = 0.97,
+                    gp = gpar(fontsize = 16, fontface = "bold"))
+          grid.lines(x = c(0.05, 0.95), y = c(0.95, 0.95), gp = gpar(lwd = 2))
+
+          # Draw the 2x2 diagnostic plot using grid.draw
+          vp <- viewport(x = 0.5, y = 0.48, width = 0.90, height = 0.85)
+          pushViewport(vp)
+          grid.draw(results$diagnostic_plot)
+          popViewport()
+
+          # Footer
+          grid.text(paste("Model:", model_id),
+                    x = 0.5, y = 0.02,
+                    gp = gpar(fontsize = 8, col = "gray50"))
+        }
+
+        # PAGE 5: COEFFICIENT FOREST PLOT ----
+        if (!is.null(results$pom_result)) {
+          grid.newpage()
+
+          # Title
+          grid.text("Coefficient Forest Plot", x = 0.5, y = 0.97,
+                    gp = gpar(fontsize = 16, fontface = "bold"))
+          grid.text("Odds Ratios with Confidence Intervals",
+                    x = 0.5, y = 0.94,
+                    gp = gpar(fontsize = 11, col = "gray30"))
+          grid.lines(x = c(0.05, 0.95), y = c(0.92, 0.92), gp = gpar(lwd = 2))
+
+          # Create forest plot
+          forest_plot <- plot_pom_coefficients(
+            pom_result = results$pom_result,
+            plot_title = NULL  # Will use default title from function
+          )
+
+          # Draw forest plot
+          vp <- viewport(x = 0.5, y = 0.48, width = 0.85, height = 0.75)
+          pushViewport(vp)
+          print(forest_plot, newpage = FALSE)
+          popViewport()
+
+          # Footer
+          grid.text(paste("Model:", model_id),
+                    x = 0.5, y = 0.02,
+                    gp = gpar(fontsize = 8, col = "gray50"))
+        }
+
+        # Close PDF device
+        dev.off()
+
+        if (verbose) {
+          cat("PDF report saved to:", file_path, "\n")
+          cat("========================================\n\n")
+        }
+
+        # Open PDF automatically
+        if (Sys.info()["sysname"] == "Linux") {
+          system(paste("xdg-open", shQuote(file_path)), wait = FALSE)
+        } else if (Sys.info()["sysname"] == "Darwin") {
+          system(paste("open", shQuote(file_path)), wait = FALSE)
+        } else if (Sys.info()["sysname"] == "Windows") {
+          shell.exec(file_path)
+        }
+
+        return(file_path)
+      }
+
+    # EXPORT MULTI-CATEGORY PDF REPORT
+      export_multi_category_pdf_report <- function(split_results, config_row,
+                                                     output_dir = NULL,
+                                                     filename = NULL, verbose = TRUE) {
+        # Export PDF report with cover page + results for each category
+        #
+        # Args:
+        #   split_results: Results object from run_pom_with_splits()
+        #   config_row: Original config row
+        #   output_dir: Directory for PDF output
+        #   filename: Optional custom filename
+        #   verbose: Print progress messages
+        #
+        # Returns:
+          #   File path of exported PDF
+
+        if (!requireNamespace("gridExtra", quietly = TRUE)) {
+          stop("Package 'gridExtra' is required for PDF reports")
+        }
+        library(gridExtra)
+        library(grid)
+
+        # Create output directory
+        if (is.null(output_dir)) {
+          output_dir <- create_timestamped_output_dir("outputs")
+        } else if (!dir.exists(output_dir)) {
+          dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+        }
+
+        # Set filename
+        model_id <- config_row$model_id
+        if (is.null(filename)) {
+          filename <- paste0(model_id, "_split_report.pdf")
+        }
+        file_path <- file.path(output_dir, filename)
+
+        if (verbose) {
+          cat("\n========================================\n")
+          cat("GENERATING MULTI-CATEGORY PDF REPORT:", model_id, "\n")
+          cat("========================================\n\n")
+        }
+
+        # Open PDF device
+        pdf(file_path, width = 8.5, height = 11, onefile = TRUE)
+
+        # COVER PAGE
+        grid.newpage()
+
+        # Title
+        grid.text(paste("Split Category Analysis:", config_row$model_label),
+                  x = 0.5, y = 0.95,
+                  gp = gpar(fontsize = 14, fontface = "bold"))
+
+        # Model ID
+        grid.text(paste("Model ID:", model_id),
+                  x = 0.5, y = 0.91,
+                  gp = gpar(fontsize = 12, col = "gray30"))
+
+        grid.lines(x = c(0.1, 0.9), y = c(0.88, 0.88), gp = gpar(lwd = 2))
+
+        # Model specification
+        y_pos <- 0.83
+        grid.text("Model Specification", x = 0.1, y = y_pos,
+                  just = "left", gp = gpar(fontsize = 12, fontface = "bold"))
+        y_pos <- y_pos - 0.03
+        grid.lines(x = c(0.1, 0.9), y = c(y_pos, y_pos), gp = gpar(lwd = 1, col = "gray60"))
+
+        y_pos <- y_pos - 0.04
+        grid.text(paste("Data Source:", config_row$data_source),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        y_pos <- y_pos - 0.03
+        grid.text(paste("Outcome Variable:", config_row$outcome_var),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        y_pos <- y_pos - 0.03
+        grid.text("Predictors:",
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10, fontface = "bold"))
+        y_pos <- y_pos - 0.025
+        predictor_list <- config_row$predictors
+        grid.text(predictor_list,
+                  x = 0.15, y = y_pos, just = "left", gp = gpar(fontsize = 9))
+
+        y_pos <- y_pos - 0.04
+        grid.text(paste("Categories Analyzed:", length(split_results$categories)),
+                  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
+
+        # Model fit statistics table
+        y_pos <- y_pos - 0.05
+        grid.text("Model Fit Statistics by Category",
+                  x = 0.1, y = y_pos, just = "left",
+                  gp = gpar(fontsize = 12, fontface = "bold"))
+        y_pos <- y_pos - 0.03
+        grid.lines(x = c(0.1, 0.9), y = c(y_pos, y_pos), gp = gpar(lwd = 1, col = "gray60"))
+
+        # Build fit statistics table
+        fit_stats_list <- list()
+        for (cat_name in split_results$categories) {
+          result <- split_results$results[[cat_name]]
+          if (result$status == "SUCCESS" && !is.null(result$pom_result)) {
+            fit_stats_list[[cat_name]] <- data.frame(
+              Category = cat_name,
+              N = result$data_prep$n_final,
+              Link = result$pom_result$model_stats$link_function,
+              AIC = round(result$pom_result$model_stats$aic, 2),
+              BIC = round(result$pom_result$model_stats$bic, 2),
+              LogLik = round(result$pom_result$model_stats$log_likelihood, 2),
+              stringsAsFactors = FALSE
+            )
+          } else {
+            fit_stats_list[[cat_name]] <- data.frame(
+              Category = cat_name,
+              N = NA,
+              Link = "FAILED",
+              AIC = NA,
+              BIC = NA,
+              LogLik = NA,
+              stringsAsFactors = FALSE
+            )
+          }
+        }
+
+        fit_stats_df <- do.call(rbind, fit_stats_list)
+
+        # Draw table
+        y_pos <- y_pos - 0.04
+        vp_table <- viewport(x = 0.5, y = y_pos - 0.15, width = 0.80, height = 0.30)
+        pushViewport(vp_table)
+        grid.table(fit_stats_df, rows = NULL,
+                   theme = ttheme_default(base_size = 9,
+                                          core = list(fg_params = list(hjust = 0, x = 0.1))))
+        popViewport()
+
+        # Footer
+        grid.text(paste("Report generated:", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
+                  x = 0.5, y = 0.05,
+                  gp = gpar(fontsize = 8, col = "gray50"))
+
+        # NOW GENERATE PAGES FOR EACH CATEGORY
+        for (cat_name in split_results$categories) {
+          result <- split_results$results[[cat_name]]
+
+          if (result$status != "SUCCESS") {
+            # Error page for this category
+            grid.newpage()
+            grid.text(paste("Category:", cat_name),
+                      x = 0.5, y = 0.95,
+                      gp = gpar(fontsize = 14, fontface = "bold"))
+            grid.text(paste("Status:", result$status),
+                      x = 0.5, y = 0.5,
+                      gp = gpar(fontsize = 12, col = "red"))
+            next
+          }
+
+          # PAGE 1: COEFFICIENTS
+          grid.newpage()
+
+          grid.text(cat_name,
+                    x = 0.5, y = 0.97,
+                    gp = gpar(fontsize = 14, fontface = "bold"))
+          grid.text("Regression Coefficients",
+                    x = 0.5, y = 0.93,
+                    gp = gpar(fontsize = 12))
+          grid.lines(x = c(0.05, 0.95), y = c(0.91, 0.91), gp = gpar(lwd = 2))
+
+          # Format coefficients table
+          coef_display <- result$pom_result$coefficients %>%
+            mutate(
+              log_odds = round(log_odds, 3),
+              std_error = round(std_error, 3),
+              p_value = ifelse(p_value < 0.001, "< 0.001",
+                              ifelse(p_value < 0.01, format(round(p_value, 3), nsmall = 3),
+                                    format(round(p_value, 2), nsmall = 2))),
+              odds_ratio = round(odds_ratio, 3),
+              ci_95 = paste0("[", round(ci_lower_or, 3), ", ", round(ci_upper_or, 3), "]")
+            ) %>%
+            select(variable, log_odds, std_error, p_value, odds_ratio, ci_95)
+
+          # Draw coefficients table
+          vp_coef <- viewport(x = 0.5, y = 0.45, width = 0.90, height = 0.80)
+          pushViewport(vp_coef)
+          grid.table(coef_display, rows = NULL,
+                     theme = ttheme_default(base_size = 8,
+                                            core = list(fg_params = list(hjust = 0, x = 0.05))))
+          popViewport()
+
+          grid.text(paste("Model:", model_id, "|", cat_name),
+                    x = 0.5, y = 0.02,
+                    gp = gpar(fontsize = 8, col = "gray50"))
+
+          # PAGE 2: VIF DIAGNOSTICS
+          if (!is.null(result$vif_results)) {
+            grid.newpage()
+
+            grid.text(cat_name,
+                      x = 0.5, y = 0.97,
+                      gp = gpar(fontsize = 14, fontface = "bold"))
+            grid.text("Multicollinearity Diagnostics",
+                      x = 0.5, y = 0.93,
+                      gp = gpar(fontsize = 12))
+            grid.lines(x = c(0.05, 0.95), y = c(0.91, 0.91), gp = gpar(lwd = 2))
+
+            # Format VIF table
+            vif_display <- result$vif_results %>%
+              mutate(
+                vif = round(vif, 2),
+                tolerance = round(tolerance, 3),
+                interpretation = case_when(
+                  vif > 10 ~ "High",
+                  vif > 5 ~ "Moderate",
+                  TRUE ~ "Low"
+                )
+              )
+
+            # Draw VIF table
+            vp_vif <- viewport(x = 0.5, y = 0.50, width = 0.80, height = 0.70)
+            pushViewport(vp_vif)
+            grid.table(vif_display, rows = NULL,
+                       theme = ttheme_default(base_size = 9,
+                                              core = list(fg_params = list(hjust = 0, x = 0.05))))
+            popViewport()
+
+            # VIF guide
+            grid.text("VIF Interpretation Guide:",
+                      x = 0.1, y = 0.15, just = "left",
+                      gp = gpar(fontsize = 10, fontface = "bold"))
+            grid.text("VIF < 5: Low multicollinearity (acceptable)",
+                      x = 0.12, y = 0.12, just = "left",
+                      gp = gpar(fontsize = 9))
+            grid.text("VIF 5-10: Moderate multicollinearity (monitor closely)",
+                      x = 0.12, y = 0.09, just = "left",
+                      gp = gpar(fontsize = 9))
+            grid.text("VIF > 10: High multicollinearity (problematic)",
+                      x = 0.12, y = 0.06, just = "left",
+                      gp = gpar(fontsize = 9))
+
+            grid.text(paste("Model:", model_id, "|", cat_name),
+                      x = 0.5, y = 0.02,
+                      gp = gpar(fontsize = 8, col = "gray50"))
+          }
+
+          # PAGE 3: DIAGNOSTIC PLOTS
+          if (!is.null(result$diagnostic_plot)) {
+            grid.newpage()
+
+            grid.text(cat_name,
+                      x = 0.5, y = 0.97,
+                      gp = gpar(fontsize = 14, fontface = "bold"))
+            grid.text("Model Diagnostic Plots",
+                      x = 0.5, y = 0.93,
+                      gp = gpar(fontsize = 12))
+            grid.lines(x = c(0.05, 0.95), y = c(0.91, 0.91), gp = gpar(lwd = 2))
+
+            # Draw diagnostic plots
+            vp_diag <- viewport(x = 0.5, y = 0.45, width = 0.90, height = 0.80)
+            pushViewport(vp_diag)
+            grid.draw(result$diagnostic_plot)
+            popViewport()
+
+            grid.text(paste("Model:", model_id, "|", cat_name),
+                      x = 0.5, y = 0.02,
+                      gp = gpar(fontsize = 8, col = "gray50"))
+          }
+
+          # PAGE 4: COEFFICIENT FOREST PLOT
+          if (!is.null(result$pom_result)) {
+            grid.newpage()
+
+            grid.text(cat_name,
+                      x = 0.5, y = 0.97,
+                      gp = gpar(fontsize = 14, fontface = "bold"))
+            grid.text("Coefficient Forest Plot",
+                      x = 0.5, y = 0.93,
+                      gp = gpar(fontsize = 12))
+            grid.lines(x = c(0.05, 0.95), y = c(0.91, 0.91), gp = gpar(lwd = 2))
+
+            # Create forest plot
+            forest_plot <- plot_pom_coefficients(
+              pom_result = result$pom_result,
+              plot_title = NULL
+            )
+
+            # Draw forest plot
+            vp_forest <- viewport(x = 0.5, y = 0.45, width = 0.85, height = 0.75)
+            pushViewport(vp_forest)
+            print(forest_plot, newpage = FALSE)
+            popViewport()
+
+            grid.text(paste("Model:", model_id, "|", cat_name),
+                      x = 0.5, y = 0.02,
+                      gp = gpar(fontsize = 8, col = "gray50"))
+          }
+        }
+
+        # Close PDF
+        dev.off()
+
+        if (verbose) {
+          cat("PDF report saved to:", file_path, "\n")
+          cat("========================================\n\n")
+        }
+
+        # Open PDF automatically
+        if (Sys.info()["sysname"] == "Linux") {
+          system(paste("xdg-open", shQuote(file_path)), wait = FALSE)
+        } else if (Sys.info()["sysname"] == "Darwin") {
+          system(paste("open", shQuote(file_path)), wait = FALSE)
+        } else if (Sys.info()["sysname"] == "Windows") {
+          shell.exec(file_path)
+        }
+
+        return(file_path)
+      }
 
 
-  # SECTION 5C: MULTI-MODEL PIPELINE FUNCTIONS ----
+  # SINGLE-MODEL ORCHESTRATION FUNCTIONS ----
+
+    run_single_pom_analysis <- function(
+      config_row,
+      run_brant_test = FALSE,
+      verbose = TRUE
+    ) {
+      # Orchestrate complete proportional odds model analysis for a single config
+      #
+      # Args:
+      #   config_row: Single row from regression.configs.tb
+      #   run_brant_test: Whether to attempt Brant test
+      #   verbose: Print progress messages
+      #
+      # Returns:
+      #   List with model_info, data_prep, pom_result, vif_results, etc.
+
+      if (verbose) {
+        cat("\n========================================\n")
+        cat("RUNNING POM ANALYSIS:", config_row$model_id, "\n")
+        cat("========================================\n\n")
+        cat("Model:", config_row$model_label, "\n")
+        cat("Outcome:", config_row$outcome_var, "\n")
+        cat("Data source:", config_row$data_source, "\n\n")
+      }
+
+      # Initialize results
+      results <- list(
+        model_info = list(
+          model_id = config_row$model_id,
+          model_label = config_row$model_label,
+          outcome_var = config_row$outcome_var,
+          data_source = config_row$data_source
+        ),
+        warnings = list(),
+        errors = list()
+      )
+
+      # STEP 1: Prepare data
+      if (verbose) cat("Step 1: Preparing data...\n")
+
+      data_prep <- tryCatch({
+        prepare_regression_data(
+          config_row = config_row,
+          data_tb = NULL,
+          id.varnames = id.varnames
+        )
+      }, error = function(e) {
+        results$errors$data_prep <<- e$message
+        return(NULL)
+      })
+
+      if (is.null(data_prep)) {
+        results$status <- "FAILED: Data preparation"
+        return(results)
+      }
+
+      results$data_prep <- data_prep
+
+      if (verbose) {
+        cat("  n_final:", data_prep$n_final, "\n\n")
+      }
+
+      # STEP 2: Build formula
+      if (verbose) cat("Step 2: Building formula...\n")
+
+      formula <- tryCatch({
+        build_formula(
+          outcome_var = data_prep$outcome_var,
+          predictors = data_prep$predictors,
+          interaction_terms = config_row$interaction_terms
+        )
+      }, error = function(e) {
+        results$errors$formula <<- e$message
+        return(NULL)
+      })
+
+      if (is.null(formula)) {
+        results$status <- "FAILED: Formula"
+        return(results)
+      }
+
+      if (verbose) cat("  Formula:", deparse(formula), "\n\n")
+
+      # STEP 3: Fit POM
+      if (verbose) cat("Step 3: Fitting POM...\n")
+
+      # Parse test_link_functions with robust type checking
+      test_links <- if (!is.null(config_row$test_link_functions) &&
+                        !is.na(config_row$test_link_functions) &&
+                        is.character(config_row$test_link_functions) &&
+                        nchar(trimws(config_row$test_link_functions)) > 0) {
+        # Split comma-separated link functions and trim whitespace
+        trimws(strsplit(config_row$test_link_functions, ",")[[1]])
+      } else {
+        # Default to logit if not specified
+        c("logit")
+      }
+
+      # Parse confidence level with type checking
+      conf_level <- if (!is.null(config_row$confidence_level) &&
+                        !is.na(config_row$confidence_level) &&
+                        is.numeric(config_row$confidence_level)) {
+        config_row$confidence_level
+      } else {
+        0.95
+      }
+
+      pom_results_by_link <- list()
+
+      for (link in test_links) {
+        pom_result <- tryCatch({
+          fit_pom(
+            formula = formula,
+            data = data_prep$data,
+            link = link,
+            confidence_level = conf_level,
+            verbose = FALSE
+          )
+        }, error = function(e) {
+          results$errors[[paste0("pom_", link)]] <<- e$message
+          return(NULL)
+        })
+
+        if (!is.null(pom_result)) {
+          pom_results_by_link[[link]] <- pom_result
+        }
+      }
+
+      if (length(pom_results_by_link) == 0) {
+        results$status <- "FAILED: POM fitting"
+        return(results)
+      }
+
+      # Select best by AIC
+      aic_values <- sapply(pom_results_by_link, function(x) x$model_stats$aic)
+      best_link <- names(which.min(aic_values))
+
+      results$pom_result <- pom_results_by_link[[best_link]]
+      results$link_comparison <- tibble(
+        link_function = names(aic_values),
+        aic = aic_values,
+        selected = names(aic_values) == best_link
+      ) %>% arrange(aic)
+
+      if (verbose) {
+        cat("  Best link:", best_link, "\n")
+        cat("  AIC:", round(results$pom_result$model_stats$aic, 2), "\n\n")
+      }
+
+      # STEP 4: VIF
+      if (verbose) cat("Step 4: Calculating VIF...\n")
+
+      vif_results <- tryCatch({
+        calculate_vif(results$pom_result$model)
+      }, error = function(e) {
+        results$warnings$vif <<- e$message
+        return(NULL)
+      })
+
+      results$vif_results <- vif_results
+
+      if (!is.null(vif_results) && verbose) {
+        high_vif <- vif_results[vif_results$vif > 5, ]
+        if (nrow(high_vif) > 0) {
+          cat("  WARNING: High VIF (>5) detected\n")
+        } else {
+          cat("  VIF check passed\n")
+        }
+        cat("\n")
+      }
+
+      # STEP 5: Brant test
+      if (run_brant_test) {
+        if (verbose) cat("Step 5: Running Brant test...\n")
+
+        brant_results <- tryCatch({
+          perform_brant_test(results$pom_result$model, verbose = FALSE)
+        }, error = function(e) {
+          results$warnings$brant <<- e$message
+          return(NULL)
+        })
+
+        results$brant_results <- brant_results
+      } else {
+        if (verbose) cat("Step 5: Skipping Brant test\n\n")
+      }
+
+      # STEP 6: Residuals
+      if (verbose) cat("Step 6: Calculating residuals...\n")
+
+      residuals <- tryCatch({
+        calculate_pom_residuals(results$pom_result, verbose = FALSE)
+      }, error = function(e) {
+        results$errors$residuals <<- e$message
+        return(NULL)
+      })
+
+      results$residuals <- residuals
+
+      if (verbose && !is.null(residuals)) {
+        cat("  Residuals calculated (n =", nrow(residuals), ")\n\n")
+      }
+
+      # STEP 7: Diagnostic plots
+      if (verbose) cat("Step 7: Creating diagnostic plots...\n")
+
+      if (!is.null(residuals)) {
+        diagnostic_plot <- tryCatch({
+          plot_pom_diagnostics(
+            pom_result = results$pom_result,
+            residuals_tb = residuals,
+            plot_title = paste(config_row$model_id, "-", config_row$model_label)
+          )
+        }, error = function(e) {
+          results$warnings$diagnostic_plot <<- e$message
+          return(NULL)
+        })
+
+        results$diagnostic_plot <- diagnostic_plot
+
+        if (!is.null(diagnostic_plot) && verbose) {
+          cat("  Diagnostic plots created\n\n")
+        }
+      }
+
+      # STEP 8: Coefficient plot (placeholder)
+      if (verbose) {
+        cat("Step 8: Coefficient plot (TODO)\n")
+        cat("  Placeholder - will implement later\n\n")
+      }
+
+      results$coefficient_plot <- NULL
+      results$status <- "SUCCESS"
+
+      if (verbose) {
+        cat("========================================\n")
+        cat("ANALYSIS COMPLETE\n")
+        cat("========================================\n\n")
+      }
+
+      return(results)
+    }
+
+    # RUN POM WITH CATEGORY SPLITS
+    run_pom_with_splits <- function(
+      config_row,
+      run_brant_test = FALSE,
+      verbose = TRUE
+    ) {
+      # Wrapper that handles split_by_category logic
+      # If split_by_category=TRUE, runs separate analysis for each category
+      # Otherwise runs single analysis
+      #
+      # Args:
+      #   config_row: Single row from regression.configs.tb
+      #   run_brant_test: Whether to attempt Brant test
+      #   verbose: Print progress messages
+      #
+      # Returns:
+      #   List with:
+      #     - is_split: TRUE if multiple categories analyzed
+      #     - categories: vector of category names (or NULL if not split)
+      #     - results: list of results (one per category, or single result)
+
+      # Check if split_by_category is requested
+      should_split <- !is.null(config_row$split_by_category) &&
+                      !is.na(config_row$split_by_category) &&
+                      config_row$split_by_category == TRUE
+
+      if (!should_split) {
+        # Run single analysis
+        single_result <- run_single_pom_analysis(
+          config_row = config_row,
+          run_brant_test = run_brant_test,
+          verbose = verbose
+        )
+
+        return(list(
+          is_split = FALSE,
+          categories = NULL,
+          results = list(single_result)
+        ))
+      }
+
+      # SPLIT BY CATEGORY LOGIC
+      if (verbose) {
+        cat("\n################################################################################\n")
+        cat("SPLIT BY CATEGORY ANALYSIS:", config_row$model_id, "\n")
+        cat("################################################################################\n\n")
+      }
+
+      # Get the data source
+      data_source_name <- config_row$data_source
+      if (!exists(data_source_name)) {
+        stop(paste("Data source", data_source_name, "not found"))
+      }
+      source_data <- get(data_source_name)
+
+      # Check if data has category column
+      if (!"category" %in% names(source_data)) {
+        warning("split_by_category=TRUE but data does not have 'category' column. Running single analysis.")
+        single_result <- run_single_pom_analysis(
+          config_row = config_row,
+          run_brant_test = run_brant_test,
+          verbose = verbose
+        )
+        return(list(
+          is_split = FALSE,
+          categories = NULL,
+          results = list(single_result)
+        ))
+      }
+
+      # Get unique categories
+      all_categories <- unique(source_data$category)
+      all_categories <- sort(all_categories[!is.na(all_categories)])
+
+      if (verbose) {
+        cat("Found", length(all_categories), "categories to analyze:\n")
+        for (cat_name in all_categories) {
+          cat("  -", cat_name, "\n")
+        }
+        cat("\n")
+      }
+
+      # Run analysis for each category
+      category_results <- list()
+
+      for (i in seq_along(all_categories)) {
+        cat_name <- all_categories[i]
+
+        if (verbose) {
+          cat("\n================================================================================\n")
+          cat("CATEGORY", i, "of", length(all_categories), ":", cat_name, "\n")
+          cat("================================================================================\n")
+        }
+
+        # Create modified config with filter for this category
+        config_for_category <- config_row
+
+        # Add or modify filter_conditions to include category filter
+        category_filter <- paste0("category == '", cat_name, "'")
+
+        if (!is.null(config_row$filter_conditions) &&
+            !is.na(config_row$filter_conditions) &&
+            is.character(config_row$filter_conditions) &&
+            nchar(trimws(config_row$filter_conditions)) > 0) {
+          # Combine existing filter with category filter
+          config_for_category$filter_conditions <- paste0(
+            "(",
+            config_row$filter_conditions,
+            ") & (",
+            category_filter,
+            ")"
+          )
+        } else {
+          # Use only category filter
+          config_for_category$filter_conditions <- category_filter
+        }
+
+        # Run analysis for this category
+        cat_result <- tryCatch({
+          run_single_pom_analysis(
+            config_row = config_for_category,
+            run_brant_test = run_brant_test,
+            verbose = verbose
+          )
+        }, error = function(e) {
+          if (verbose) {
+            cat("ERROR for category", cat_name, ":", e$message, "\n")
+          }
+          return(list(
+            status = "FAILED",
+            error = e$message,
+            model_info = list(
+              model_id = config_row$model_id,
+              category = cat_name
+            )
+          ))
+        })
+
+        # Store result with category name
+        category_results[[cat_name]] <- cat_result
+      }
+
+      if (verbose) {
+        cat("\n################################################################################\n")
+        cat("SPLIT ANALYSIS COMPLETE\n")
+        cat("################################################################################\n\n")
+      }
+
+      return(list(
+        is_split = TRUE,
+        categories = all_categories,
+        results = category_results
+      ))
+    }
+
+  # MULTI-MODEL PIPELINE FUNCTIONS ----
 
     # These functions loop through config table and run multiple models
 
@@ -2041,265 +3275,234 @@
       # Will:
       #   1. Filter for implement = TRUE
       #   2. Loop through each config row
-      #   3. Handle split_by_category logic
-      #   4. Call run_single_pom_analysis() for each model
-      #   5. Collect results
-      #   6. Generate summary tables
+      #   3. Call run_pom_with_splits() for each model
+      #   4. Collect results
+      #   5. Generate summary tables
 
-
-  # SECTION 5D: EXPORT FUNCTIONS ----
-
-    # These functions export results to files
-
-    # EXPORT REGRESSION RESULTS
-      # TODO: Implement export_regression_results(results_list, output_dir)
-      # Will export:
-      #   1. PDF with all diagnostic plots
-      #   2. PDF with all coefficient plots
-      #   3. Excel/CSV with coefficient tables
-      #   4. Excel/CSV with model fit statistics
-      #   5. Excel/CSV with assumption test results
-
-
-  # SECTION 5E: EXAMPLE/TEST CODE ----
+  # EXAMPLE/TEST CODE ----
 
     # This section contains one-off example code for testing and development
     # Will be replaced with function calls as we build out the pipeline
 
-    # EXAMPLE 1: OLS REGRESSION (original example - kept for reference)
-    run_ols_example <- FALSE
+    run_implemented_models <- TRUE
 
-    if (run_ols_example) {
-      # Calculate mean awareness score per respondent
-      example_outcome_data.tb <- awareness.tb %>%
-        group_by(across(all_of(id.varnames))) %>%
-        summarize(
-          mean_outcome = mean(value.num, na.rm = TRUE),
-          n_responses = n(),
-          .groups = "drop"
-        )
+    if (run_implemented_models) {
+      cat("\n=== RUNNING ALL IMPLEMENTED MODELS ===\n\n")
 
-      # Define exclusions and base categories for all variables
-      example_var_config <- list(
-        mean_outcome = list(exclude = c(), base = NA),
-        age = list(exclude = c(), base = NA),
-        sex = list(exclude = c("Prefer not to say"), base = "Male"),
-        ethnicity = list(exclude = c(), base = "White"),
-        nationality.native = list(exclude = c(), base = NA),
-        language.native = list(exclude = c(), base = NA),
-        student.status = list(exclude = c(), base = NA),
-        employment.status = list(exclude = c(), base = NA),
-        country.of.residence = list(exclude = c("United Kingdom"), base = NA),
-        political.affiliation = list(exclude = c("Don't Know", "Other", "Would not vote"), base = "USA-Democrat")
-      )
+      # Filter for models with implement = TRUE
+      models_to_run <- regression.configs.tb %>%
+        filter(implement == TRUE)
 
-      # Get all variable names from config (excluding outcome which is already in data)
-      vars_to_join <- setdiff(names(example_var_config), "mean_outcome")
-
-      # Join all variables from data.tb
-      example_outcome_data.tb <- example_outcome_data.tb %>%
-        left_join(
-          data.tb %>% select(all_of(c(id.varnames, vars_to_join))),
-          by = id.varnames
-        )
-
-      # Apply filtering for all variables
-      example_data.tb <- example_outcome_data.tb
-
-      for (var_name in names(example_var_config)) {
-        if (var_name %in% names(example_data.tb)) {
-          exclude_vals <- example_var_config[[var_name]]$exclude
-
-          # Filter out excluded values and NAs
-          example_data.tb <- example_data.tb %>%
-            filter(!is.na(.data[[var_name]]))
-
-          if (length(exclude_vals) > 0) {
-            example_data.tb <- example_data.tb %>%
-              filter(!(.data[[var_name]] %in% exclude_vals))
-          }
-        }
-      }
-
-      # Set base categories for factor variables
-      for (var_name in names(example_var_config)) {
-        base_val <- example_var_config[[var_name]]$base
-
-        if (!is.na(base_val) && var_name %in% names(example_data.tb)) {
-          # Get all unique values for this variable
-          all_vals <- unique(example_data.tb[[var_name]])
-
-          # Create factor with base category FIRST in levels (becomes reference)
-          new_levels <- c(base_val, setdiff(all_vals, base_val))
-
-          example_data.tb <- example_data.tb %>%
-            mutate(!!var_name := factor(.data[[var_name]], levels = new_levels))
-        }
-      }
-
-      # Remove variables with only 1 unique value (cannot be used in regression)
-      vars_to_remove <- c()
-
-      for (var_name in names(example_var_config)) {
-        if (var_name %in% names(example_data.tb)) {
-          n_unique <- length(unique(example_data.tb[[var_name]]))
-
-          if (n_unique <= 1) {
-            vars_to_remove <- c(vars_to_remove, var_name)
-          }
-        }
-      }
-
-      if (length(vars_to_remove) > 0) {
-        cat("WARNING: Removing variables with ≤1 unique value:\n")
-        for (var in vars_to_remove) {
-          cat("  - ", var, "\n", sep = "")
+      if (nrow(models_to_run) == 0) {
+        cat("NOTE: No models have implement = TRUE in regression.configs.tb\n")
+        cat("To run models, set implement = TRUE in the Google Sheets regression.configs tab\n\n")
+      } else {
+        cat("Found", nrow(models_to_run), "model(s) to run:\n")
+        for (i in seq_len(nrow(models_to_run))) {
+          cat("  -", models_to_run$model_id[i], ":", models_to_run$model_label[i], "\n")
         }
         cat("\n")
 
-        example_data.tb <- example_data.tb %>%
-          select(-all_of(vars_to_remove))
-      }
+        # Store results for all models
+        all_results <- list()
 
-      cat("Sample size for regression:", nrow(example_data.tb), "\n\n")
+        # Loop through each model with implement = TRUE
+        for (i in seq_len(nrow(models_to_run))) {
+          current_model <- models_to_run[i, ]
+          model_id <- current_model$model_id
 
-      # Fit the model
-      example_model <- lm(mean_outcome ~
-                      age + sex + ethnicity + nationality.native + language.native + student.status +
-                      employment.status + political.affiliation,
-                      data = example_data.tb)
+          cat("\n", strrep("=", 80), "\n", sep = "")
+          cat("RUNNING MODEL:", model_id, "\n")
+          cat(strrep("=", 80), "\n\n", sep = "")
 
-      cat("MODEL SUMMARY:\n") # Display summary
+          cat("Config details:\n")
+          cat("  Model ID:", current_model$model_id, "\n")
+          cat("  Model label:", current_model$model_label, "\n")
+          cat("  Outcome:", current_model$outcome_var, "\n")
+          cat("  Data source:", current_model$data_source, "\n")
+          cat("  Predictors:", current_model$predictors, "\n")
+          cat("  Split by category:", current_model$split_by_category, "\n\n")
 
-      # Get the summary object
-      example_summary <- summary(example_model)
+          # Run the orchestrator with split handling
+          current_results <- tryCatch({
+            run_pom_with_splits(
+              config_row = current_model,
+              run_brant_test = FALSE,
+              verbose = TRUE
+            )
+          }, error = function(e) {
+            cat("ERROR running model", model_id, ":", e$message, "\n")
+            return(list(
+              is_split = FALSE,
+              categories = NULL,
+              results = list(list(
+                status = "ERROR",
+                model_info = list(model_id = model_id),
+                errors = list(orchestrator = e$message)
+              ))
+            ))
+          })
 
-      # Modify coefficient names to add underscores between variable names and values
-      coef_names <- rownames(example_summary$coefficients)
+          # Store results
+          all_results[[model_id]] <- current_results
 
-      # Create a function to add underscores
-      add_underscores_to_coefs <- function(coef_name) {
-        # Skip intercept
-        if (coef_name == "(Intercept)") {
-          return(coef_name)
+          # Export PDF report
+          if (current_results$is_split) {
+            # Multi-category report
+            pdf_path <- export_multi_category_pdf_report(
+              split_results = current_results,
+              config_row = current_model,
+              verbose = TRUE
+            )
+          } else {
+            # Single analysis report (only if successful)
+            single_result <- current_results$results[[1]]
+            if (single_result$status == "SUCCESS") {
+              pdf_path <- export_pdf_report(
+                results = single_result,
+                verbose = TRUE
+              )
+            }
+          }
+
+          # Display summary of results
+          cat("\n", strrep("-", 80), "\n", sep = "")
+          cat("RESULTS SUMMARY FOR", model_id, "\n")
+          cat(strrep("-", 80), "\n\n", sep = "")
+
+          if (current_results$is_split) {
+            # Split analysis summary
+            cat("Split Analysis: YES\n")
+            cat("Categories analyzed:", length(current_results$categories), "\n")
+            cat("Categories:", paste(current_results$categories, collapse = ", "), "\n\n")
+
+            # Summarize each category
+            for (cat_name in current_results$categories) {
+              cat_result <- current_results$results[[cat_name]]
+              cat("Category:", cat_name, "\n")
+              cat("  Status:", cat_result$status, "\n")
+
+              if (cat_result$status == "SUCCESS") {
+                cat("  Sample size:", cat_result$data_prep$n_final, "\n")
+                cat("  AIC:", round(cat_result$pom_result$model_stats$aic, 2), "\n")
+              }
+              cat("\n")
+            }
+          } else {
+            # Single analysis summary
+            single_result <- current_results$results[[1]]
+            cat("Split Analysis: NO\n")
+            cat("Status:", single_result$status, "\n")
+
+            if (single_result$status == "SUCCESS") {
+              cat("Sample size:", single_result$data_prep$n_final, "\n")
+              cat("Dropped observations:", single_result$data_prep$n_dropped, "\n\n")
+
+              cat("Model fit:\n")
+              cat("  Best link function:", single_result$pom_result$model_stats$link_function, "\n")
+              cat("  AIC:", round(single_result$pom_result$model_stats$aic, 2), "\n")
+              cat("  BIC:", round(single_result$pom_result$model_stats$bic, 2), "\n")
+              cat("  Log-likelihood:", round(single_result$pom_result$model_stats$log_likelihood, 2), "\n\n")
+
+              cat("Coefficients (first 10):\n")
+              print(head(single_result$pom_result$coefficients, 10))
+              cat("\n")
+
+              if (!is.null(single_result$vif_results)) {
+                cat("VIF diagnostics:\n")
+                print(single_result$vif_results)
+                cat("\n")
+              }
+
+              cat("Diagnostic plot: ", ifelse(!is.null(single_result$diagnostic_plot), "Created ✓", "Not created"), "\n")
+              cat("Residuals table: ", ifelse(!is.null(single_result$residuals),
+                                              paste(nrow(single_result$residuals), "observations"),
+                                              "Not created"), "\n")
+
+              cat("\nWarnings:", length(single_result$warnings), "\n")
+              cat("Errors:", length(single_result$errors), "\n")
+
+              if (length(single_result$warnings) > 0) {
+                cat("\nWarning messages:\n")
+                for (j in seq_along(single_result$warnings)) {
+                  cat("  -", names(single_result$warnings)[j], ":", single_result$warnings[[j]], "\n")
+                }
+              }
+
+              if (length(single_result$errors) > 0) {
+                cat("\nError messages:\n")
+                for (j in seq_along(single_result$errors)) {
+                  cat("  -", names(single_result$errors)[j], ":", single_result$errors[[j]], "\n")
+                }
+              }
+            }
+          }
+
+          cat("\n", strrep("=", 80), "\n", sep = "")
+          cat("MODEL", model_id, "COMPLETE\n")
+          cat(strrep("=", 80), "\n\n", sep = "")
         }
 
-        # Sort variable names by length (longest first) to match compound names first
-        var_names_sorted <- names(example_var_config)[order(-nchar(names(example_var_config)))]
+        # Overall summary
+        cat("\n", strrep("#", 80), "\n", sep = "")
+        cat("ALL MODELS COMPLETE\n")
+        cat(strrep("#", 80), "\n\n", sep = "")
 
-        # For each variable in example_var_config, check if coef_name starts with it
-        for (var_name in var_names_sorted) {
-          if (startsWith(coef_name, var_name)) {
-            # Extract the value part (everything after the variable name)
-            value_part <- substring(coef_name, nchar(var_name) + 1)
+        cat("Total models run:", length(all_results), "\n")
 
-            # If there's a value part, add underscore
-            if (nchar(value_part) > 0) {
-              return(paste0(var_name, "_", value_part))
-            } else {
-              return(coef_name)  # No value part (e.g., continuous variable)
-            }
+        # Count successful models (handling split structure)
+        successful <- 0
+        failed <- 0
+        for (model_id in names(all_results)) {
+          result <- all_results[[model_id]]
+          if (result$is_split) {
+            # For split analyses, check if any category succeeded
+            any_success <- any(sapply(result$results, function(x) x$status == "SUCCESS"))
+            if (any_success) successful <- successful + 1 else failed <- failed + 1
+          } else {
+            # For single analyses
+            if (result$results[[1]]$status == "SUCCESS") successful <- successful + 1 else failed <- failed + 1
           }
         }
 
-        return(coef_name)  # No match found, return original
-      }
+        cat("Successful:", successful, "\n")
+        cat("Failed:", failed, "\n\n")
 
-      # Apply the function to all coefficient names
-      new_coef_names <- sapply(coef_names, add_underscores_to_coefs, USE.NAMES = FALSE)
-      rownames(example_summary$coefficients) <- new_coef_names
-
-      # Print the modified summary
-      print(example_summary)
-    }  # End run_ols_example
-
-    # EXAMPLE 2: POM TEST - Testing fit_pom() and calculate_pom_residuals()
-      test_model_002 <- TRUE
-
-      if (test_model_002) {
-        cat("\n=== TESTING MODEL_002 WITH CALCULATE_POM_RESIDUALS ===\n\n")
-
-        # Use model_002 configuration from regression.configs.tb
-        # outcome_var: value.num
-        # data_source: awareness.tb
-        # predictors: age, sex, ethnicity, political.affiliation
-        # NOTE: shown.infographic would be constant within a single category,
-        # so we exclude it for this single-category test
-
-        # Prepare test data for first category
-        first_category <- unique(awareness.tb$category)[1]
-        cat("Testing with category:", first_category, "\n\n")
-
-        test_data_m002 <- awareness.tb %>%
-          filter(category == first_category) %>%
-          select(value.num, age, sex, ethnicity, political.affiliation) %>%
-          drop_na() %>%
-          mutate(
-            sex = factor(sex),
-            ethnicity = factor(ethnicity),
-            political.affiliation = factor(political.affiliation)
-          )
-
-        cat("Test data prepared for model_002:\n")
-        cat("  n =", nrow(test_data_m002), "\n")
-        cat("  Outcome levels:", paste(sort(unique(test_data_m002$value.num)), collapse = ", "), "\n")
-        cat("  Predictor levels:\n")
-        cat("    sex:", paste(levels(test_data_m002$sex), collapse = ", "), "\n")
-        cat("    ethnicity:", paste(levels(test_data_m002$ethnicity), collapse = ", "), "\n")
-        cat("    political.affiliation:", length(levels(test_data_m002$political.affiliation)), "levels\n\n")
-
-        if (nrow(test_data_m002) > 0) {
-          # Fit POM model
-          cat("Step 1: Fitting POM model...\n\n")
-          test_formula_m002 <- value.num ~ age + sex + ethnicity + political.affiliation
-
-          pom_result_m002 <- fit_pom(
-            formula = test_formula_m002,
-            data = test_data_m002,
-            link = "logit",
-            confidence_level = 0.95,
-            verbose = TRUE
-          )
-
-          cat("\nModel fitted successfully!\n\n")
-          cat("Coefficients table:\n")
-          print(pom_result_m002$coefficients)
+        if (successful > 0) {
+          cat("Successfully completed models:\n")
+          for (model_id in names(all_results)) {
+            result <- all_results[[model_id]]
+            if (result$is_split) {
+              any_success <- any(sapply(result$results, function(x) x$status == "SUCCESS"))
+              if (any_success) {
+                model_label <- result$results[[1]]$model_info$model_label
+                cat("  ✓", model_id, "-", model_label, "\n")
+              }
+            } else {
+              if (result$results[[1]]$status == "SUCCESS") {
+                cat("  ✓", model_id, "-", result$results[[1]]$model_info$model_label, "\n")
+              }
+            }
+          }
           cat("\n")
+        }
 
-          # Calculate residuals
-          cat("Step 2: Calculating residuals...\n\n")
-          residuals_m002 <- calculate_pom_residuals(pom_result_m002, verbose = TRUE)
-
-          cat("\nResiduals calculated!\n\n")
-          cat("First 10 rows of residuals table:\n")
-          print(head(residuals_m002, 10))
+        if (failed > 0) {
+          cat("Failed models:\n")
+          for (model_id in names(all_results)) {
+            result <- all_results[[model_id]]
+            if (result$is_split) {
+              all_failed <- all(sapply(result$results, function(x) x$status != "SUCCESS"))
+              if (all_failed) {
+                cat("  ✗", model_id, "\n")
+              }
+            } else {
+              if (result$results[[1]]$status != "SUCCESS") {
+                cat("  ✗", model_id, "\n")
+              }
+            }
+          }
           cat("\n")
-
-          cat("Summary statistics for residuals:\n")
-          cat("  Pearson residuals:\n")
-          cat("    Mean:", round(mean(residuals_m002$pearson_residual), 4), "\n")
-          cat("    Median:", round(median(residuals_m002$pearson_residual), 4), "\n")
-          cat("    SD:", round(sd(residuals_m002$pearson_residual), 4), "\n")
-          cat("  Deviance residuals:\n")
-          cat("    Mean:", round(mean(residuals_m002$deviance_residual), 4), "\n")
-          cat("    Median:", round(median(residuals_m002$deviance_residual), 4), "\n")
-          cat("    SD:", round(sd(residuals_m002$deviance_residual), 4), "\n")
-          cat("\n")
-
-          # Test diagnostic plots
-          cat("Step 3: Creating diagnostic plots...\n\n")
-          diagnostic_plot_m002 <- plot_pom_diagnostics(
-            pom_result = pom_result_m002,
-            residuals_tb = residuals_m002,
-            plot_title = paste("Model 002 Diagnostics:", first_category)
-          )
-
-          cat("Diagnostic plots created successfully!\n")
-          cat("(View the plot in your R graphics device)\n\n")
-
-          cat("=== TEST COMPLETE ===\n\n")
-
-        } else {
-          cat("ERROR: No data available for testing model_002.\n\n")
         }
       }
+    }
