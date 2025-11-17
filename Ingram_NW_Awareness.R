@@ -359,7 +359,7 @@
     names(export.ls) <- clean_table_names[clean_object_names %in% ls()]
 
 
-# 3-EXPORT ------------------------------------------------------------------------------- 
+# 3-EXPORT CLEANED DATA ------------------------------------------------------------------------------- 
   export.logical <- FALSE
 
   if(export.logical){
@@ -427,7 +427,7 @@
   }
 
 # 4-ANALYSIS, STATISTICAL TESTS -------------------------------------------------------------------------------
-
+# 4A-BIVARIATE TESTS
   run.bivariate.tests <- FALSE
 
   if(run.bivariate.tests){  
@@ -1216,559 +1216,872 @@
   }
 
 
-# 4B-REGRESSION HELPER FUNCTIONS ---------------------------------------------------------------
+# 4B-REGRESSIONS
 
-  # CALCULATE VIF (Variance Inflation Factor) FOR MULTICOLLINEARITY DETECTION
-    calculate_vif <- function(model) {
-      # Extract model matrix (without intercept)
-      X <- model.matrix(model)[, -1, drop = FALSE]
+  #Regression Helper Functions ----
 
-      # Handle case where there's only one predictor
-      if (ncol(X) == 1) {
+    # CALCULATE VIF (Variance Inflation Factor) FOR MULTICOLLINEARITY DETECTION
+      calculate_vif <- function(model) {
+        # Extract model matrix (without intercept)
+        X <- model.matrix(model)[, -1, drop = FALSE]
+
+        # Handle case where there's only one predictor
+        if (ncol(X) == 1) {
+          vif_results <- data.frame(
+            variable = colnames(X),
+            vif = 1,
+            tolerance = 1
+          )
+          return(vif_results)
+        }
+
+        # Calculate VIF for each predictor
+        vif_values <- numeric(ncol(X))
+        names(vif_values) <- colnames(X)
+
+        for (i in seq_len(ncol(X))) {
+          # Regress each predictor on all other predictors
+          formula_str <- paste(colnames(X)[i], "~",
+                              paste(colnames(X)[-i], collapse = " + "))
+          r_squared <- summary(lm(as.formula(formula_str), data = as.data.frame(X)))$r.squared
+
+          # VIF = 1 / (1 - R²)
+          vif_values[i] <- 1 / (1 - r_squared)
+        }
+
+        # Create results dataframe
         vif_results <- data.frame(
-          variable = colnames(X),
-          vif = 1,
-          tolerance = 1
+          variable = names(vif_values),
+          vif = vif_values,
+          tolerance = 1 / vif_values,
+          row.names = NULL
         )
+
         return(vif_results)
       }
 
-      # Calculate VIF for each predictor
-      vif_values <- numeric(ncol(X))
-      names(vif_values) <- colnames(X)
+    # PREPARE REGRESSION DATA FROM CONFIG ROW
+      prepare_regression_data <- function(config_row, data_tb, id.varnames) {
+        # Get data source
+        data_source_name <- config_row$data_source
 
-      for (i in seq_len(ncol(X))) {
-        # Regress each predictor on all other predictors
-        formula_str <- paste(colnames(X)[i], "~",
-                            paste(colnames(X)[-i], collapse = " + "))
-        r_squared <- summary(lm(as.formula(formula_str), data = as.data.frame(X)))$r.squared
-
-        # VIF = 1 / (1 - R²)
-        vif_values[i] <- 1 / (1 - r_squared)
-      }
-
-      # Create results dataframe
-      vif_results <- data.frame(
-        variable = names(vif_values),
-        vif = vif_values,
-        tolerance = 1 / vif_values,
-        row.names = NULL
-      )
-
-      return(vif_results)
-    }
-
-  # PREPARE REGRESSION DATA FROM CONFIG ROW
-    prepare_regression_data <- function(config_row, data_tb, id.varnames) {
-      # Get data source
-      data_source_name <- config_row$data_source
-
-      # Check if data source exists
-      if (!exists(data_source_name)) {
-        stop(paste("Data source", data_source_name, "not found"))
-      }
-
-      source_data <- get(data_source_name)
-
-      # Apply filter conditions if specified
-      if (!is.na(config_row$filter_conditions) && config_row$filter_conditions != "") {
-        source_data <- source_data %>%
-          filter(eval(parse(text = config_row$filter_conditions)))
-      }
-
-      # Get outcome and predictor variables
-      outcome_var <- config_row$outcome_var
-      predictors <- strsplit(config_row$predictors, ",\\s*")[[1]]
-
-      # Add control variables if specified
-      if (!is.na(config_row$control_vars) && config_row$control_vars != "") {
-        control_vars <- strsplit(config_row$control_vars, ",\\s*")[[1]]
-        predictors <- c(predictors, control_vars)
-      }
-
-      # Select relevant columns
-      all_vars <- unique(c(outcome_var, predictors))
-
-      # For wide data, ensure all variables exist
-      missing_vars <- setdiff(all_vars, names(source_data))
-      if (length(missing_vars) > 0) {
-        stop(paste("Variables not found in data:", paste(missing_vars, collapse = ", ")))
-      }
-
-      # Create regression dataset
-      regression_data <- source_data %>%
-        select(all_of(all_vars)) %>%
-        drop_na()  # Remove rows with any NA in the model variables
-
-      return(list(
-        data = regression_data,
-        outcome_var = outcome_var,
-        predictors = predictors,
-        n_original = nrow(source_data),
-        n_final = nrow(regression_data),
-        n_dropped = nrow(source_data) - nrow(regression_data)
-      ))
-    }
-
-  # BUILD FORMULA FROM PREDICTORS AND INTERACTIONS
-    build_formula <- function(outcome_var, predictors, interaction_terms = NA) {
-      # Start with main effects
-      formula_str <- paste(outcome_var, "~", paste(predictors, collapse = " + "))
-
-      # Add interactions if specified
-      if (!is.na(interaction_terms) && interaction_terms != "") {
-        interactions <- strsplit(interaction_terms, ",\\s*")[[1]]
-        # Replace * with : for interaction notation in formula
-        interactions <- gsub("\\*", ":", interactions)
-        formula_str <- paste(formula_str, "+", paste(interactions, collapse = " + "))
-      }
-
-      return(as.formula(formula_str))
-    }
-
-  # CHECK SUFFICIENT CELL COUNTS FOR ORDINAL REGRESSION
-    check_cell_counts <- function(data, outcome_var, min_count = 10) {
-      cell_counts <- data %>%
-        count(.data[[outcome_var]]) %>%
-        arrange(n)
-
-      issues <- cell_counts %>% filter(n < min_count)
-
-      result <- list(
-        all_counts = cell_counts,
-        min_count = min(cell_counts$n),
-        issues = issues,
-        has_issues = nrow(issues) > 0
-      )
-
-      return(result)
-    }
-
-  # FIT PROPORTIONAL ODDS MODEL WITH SPECIFIED LINK FUNCTION
-    fit_pom <- function(
-      formula,
-      data,
-      link = "logit",
-      confidence_level = 0.95,
-      verbose = TRUE
-    ) {
-      # Load MASS for polr
-      if (!requireNamespace("MASS", quietly = TRUE)) {
-        stop("Package 'MASS' is required for ordinal regression. Please install it.")
-      }
-
-      # Validate and convert link function names to MASS::polr method names
-      # User-friendly name -> polr method name
-      link_map <- c(
-        "logit" = "logistic",
-        "probit" = "probit",
-        "cloglog" = "cloglog",
-        "loglog" = "loglog",
-        "cauchit" = "cauchit"
-      )
-
-      if (!(link %in% names(link_map))) {
-        stop(paste("Invalid link function. Must be one of:",
-                   paste(names(link_map), collapse = ", ")))
-      }
-
-      # Get the polr method name
-      polr_method <- link_map[link]
-
-      # Extract outcome variable name from formula
-      outcome_var <- as.character(formula)[2]
-
-      # Ensure outcome is an ordered factor
-      if (!is.ordered(data[[outcome_var]])) {
-        if (verbose) {
-          cat("  Converting outcome variable to ordered factor...\n")
+        # Check if data source exists
+        if (!exists(data_source_name)) {
+          stop(paste("Data source", data_source_name, "not found"))
         }
-        # If numeric, assume natural ordering
-        if (is.numeric(data[[outcome_var]])) {
-          data[[outcome_var]] <- factor(data[[outcome_var]], ordered = TRUE)
-        } else {
-          # If character/factor, preserve existing levels or sort
-          existing_levels <- if (is.factor(data[[outcome_var]])) {
-            levels(data[[outcome_var]])
+
+        source_data <- get(data_source_name)
+
+        # Apply filter conditions if specified
+        if (!is.na(config_row$filter_conditions) && config_row$filter_conditions != "") {
+          source_data <- source_data %>%
+            filter(eval(parse(text = config_row$filter_conditions)))
+        }
+
+        # Get outcome and predictor variables
+        outcome_var <- config_row$outcome_var
+        predictors <- strsplit(config_row$predictors, ",\\s*")[[1]]
+
+        # Add control variables if specified
+        if (!is.na(config_row$control_vars) && config_row$control_vars != "") {
+          control_vars <- strsplit(config_row$control_vars, ",\\s*")[[1]]
+          predictors <- c(predictors, control_vars)
+        }
+
+        # Select relevant columns
+        all_vars <- unique(c(outcome_var, predictors))
+
+        # For wide data, ensure all variables exist
+        missing_vars <- setdiff(all_vars, names(source_data))
+        if (length(missing_vars) > 0) {
+          stop(paste("Variables not found in data:", paste(missing_vars, collapse = ", ")))
+        }
+
+        # Create regression dataset
+        regression_data <- source_data %>%
+          select(all_of(all_vars)) %>%
+          drop_na()  # Remove rows with any NA in the model variables
+
+        return(list(
+          data = regression_data,
+          outcome_var = outcome_var,
+          predictors = predictors,
+          n_original = nrow(source_data),
+          n_final = nrow(regression_data),
+          n_dropped = nrow(source_data) - nrow(regression_data)
+        ))
+      }
+
+    # BUILD FORMULA FROM PREDICTORS AND INTERACTIONS
+      build_formula <- function(outcome_var, predictors, interaction_terms = NA) {
+        # Start with main effects
+        formula_str <- paste(outcome_var, "~", paste(predictors, collapse = " + "))
+
+        # Add interactions if specified
+        if (!is.na(interaction_terms) && interaction_terms != "") {
+          interactions <- strsplit(interaction_terms, ",\\s*")[[1]]
+          # Replace * with : for interaction notation in formula
+          interactions <- gsub("\\*", ":", interactions)
+          formula_str <- paste(formula_str, "+", paste(interactions, collapse = " + "))
+        }
+
+        return(as.formula(formula_str))
+      }
+
+    # CHECK SUFFICIENT CELL COUNTS FOR ORDINAL REGRESSION
+      check_cell_counts <- function(data, outcome_var, min_count = 10) {
+        cell_counts <- data %>%
+          count(.data[[outcome_var]]) %>%
+          arrange(n)
+
+        issues <- cell_counts %>% filter(n < min_count)
+
+        result <- list(
+          all_counts = cell_counts,
+          min_count = min(cell_counts$n),
+          issues = issues,
+          has_issues = nrow(issues) > 0
+        )
+
+        return(result)
+      }
+
+    # FIT PROPORTIONAL ODDS MODEL WITH SPECIFIED LINK FUNCTION
+      fit_pom <- function(
+        formula,
+        data,
+        link = "logit",
+        confidence_level = 0.95,
+        verbose = TRUE
+      ) {
+        # Load MASS for polr
+        if (!requireNamespace("MASS", quietly = TRUE)) {
+          stop("Package 'MASS' is required for ordinal regression. Please install it.")
+        }
+
+        # Validate and convert link function names to MASS::polr method names
+        # User-friendly name -> polr method name
+        link_map <- c(
+          "logit" = "logistic",
+          "probit" = "probit",
+          "cloglog" = "cloglog",
+          "loglog" = "loglog",
+          "cauchit" = "cauchit"
+        )
+
+        if (!(link %in% names(link_map))) {
+          stop(paste("Invalid link function. Must be one of:",
+                    paste(names(link_map), collapse = ", ")))
+        }
+
+        # Get the polr method name
+        polr_method <- link_map[link]
+
+        # Extract outcome variable name from formula
+        outcome_var <- as.character(formula)[2]
+
+        # Ensure outcome is an ordered factor
+        if (!is.ordered(data[[outcome_var]])) {
+          if (verbose) {
+            cat("  Converting outcome variable to ordered factor...\n")
+          }
+          # If numeric, assume natural ordering
+          if (is.numeric(data[[outcome_var]])) {
+            data[[outcome_var]] <- factor(data[[outcome_var]], ordered = TRUE)
           } else {
-            sort(unique(data[[outcome_var]]))
-          }
-          data[[outcome_var]] <- factor(data[[outcome_var]],
-                                        levels = existing_levels,
-                                        ordered = TRUE)
-        }
-      }
-
-      # Check that all predictor variables have at least 2 levels
-      predictor_vars <- all.vars(formula[[3]])  # Get variable names from RHS
-      for (pred_var in predictor_vars) {
-        if (pred_var %in% names(data)) {
-          n_levels <- length(unique(data[[pred_var]]))
-          if (n_levels < 2) {
-            stop(paste("Predictor variable", pred_var, "has only", n_levels,
-                      "level(s). All predictors must have at least 2 levels."))
+            # If character/factor, preserve existing levels or sort
+            existing_levels <- if (is.factor(data[[outcome_var]])) {
+              levels(data[[outcome_var]])
+            } else {
+              sort(unique(data[[outcome_var]]))
+            }
+            data[[outcome_var]] <- factor(data[[outcome_var]],
+                                          levels = existing_levels,
+                                          ordered = TRUE)
           }
         }
-      }
 
-      # Check cell counts
-      cell_check <- check_cell_counts(data, outcome_var, min_count = 10)
-      if (cell_check$has_issues && verbose) {
-        cat("  WARNING: Some outcome categories have fewer than 10 observations:\n")
-        print(cell_check$issues)
-        cat("\n")
-      }
-
-      # Fit the model
-      if (verbose) {
-        cat("  Fitting proportional odds model with", link, "link...\n")
-      }
-
-      model <- tryCatch({
-        MASS::polr(formula, data = data, Hess = TRUE, method = polr_method)
-      }, error = function(e) {
-        stop(paste("Model fitting failed:", e$message))
-      })
-
-      # Extract coefficients and standard errors
-      coef_table <- coef(summary(model))
-
-      # Calculate z-critical value for confidence intervals
-      alpha <- 1 - confidence_level
-      z_crit <- qnorm(1 - alpha/2)
-
-      # Process coefficients (predictors only, not thresholds)
-      n_predictors <- nrow(coef_table) - (nlevels(data[[outcome_var]]) - 1)
-
-      if (n_predictors > 0) {
-        predictor_coefs <- coef_table[1:n_predictors, , drop = FALSE]
-
-        # Create results dataframe
-        results <- tibble(
-          variable = rownames(predictor_coefs),
-          log_odds = predictor_coefs[, "Value"],
-          std_error = predictor_coefs[, "Std. Error"],
-          t_value = predictor_coefs[, "t value"],
-          p_value = 2 * pnorm(abs(predictor_coefs[, "t value"]), lower.tail = FALSE),
-          # Calculate confidence intervals
-          ci_lower_log_odds = log_odds - z_crit * std_error,
-          ci_upper_log_odds = log_odds + z_crit * std_error,
-          # Convert to odds ratios
-          odds_ratio = exp(log_odds),
-          ci_lower_or = exp(ci_lower_log_odds),
-          ci_upper_or = exp(ci_upper_log_odds)
-        )
-      } else {
-        results <- tibble(
-          variable = character(),
-          log_odds = numeric(),
-          std_error = numeric(),
-          t_value = numeric(),
-          p_value = numeric(),
-          ci_lower_log_odds = numeric(),
-          ci_upper_log_odds = numeric(),
-          odds_ratio = numeric(),
-          ci_lower_or = numeric(),
-          ci_upper_or = numeric()
-        )
-      }
-
-      # Extract thresholds (intercepts)
-      threshold_indices <- (n_predictors + 1):nrow(coef_table)
-      thresholds <- tibble(
-        threshold = rownames(coef_table)[threshold_indices],
-        value = coef_table[threshold_indices, "Value"],
-        std_error = coef_table[threshold_indices, "Std. Error"]
-      )
-
-      # Calculate model fit statistics
-      model_stats <- list(
-        aic = AIC(model),
-        bic = BIC(model),
-        log_likelihood = logLik(model)[1],
-        df = attr(logLik(model), "df"),
-        n_obs = nobs(model),
-        n_predictors = n_predictors,
-        link_function = link,
-        confidence_level = confidence_level
-      )
-
-      if (verbose) {
-        cat("  Model fitted successfully\n")
-        cat("  AIC:", round(model_stats$aic, 2), "\n")
-        cat("  BIC:", round(model_stats$bic, 2), "\n")
-        cat("  Log-likelihood:", round(model_stats$log_likelihood, 2), "\n\n")
-      }
-
-      return(list(
-        model = model,
-        coefficients = results,
-        thresholds = thresholds,
-        model_stats = model_stats,
-        cell_counts = cell_check$all_counts,
-        formula = formula,
-        outcome_var = outcome_var
-      ))
-    }
-
-  # BRANT TEST FOR PROPORTIONAL ODDS ASSUMPTION
-    perform_brant_test <- function(pom_model, verbose = TRUE) {
-      # Load brant package
-      if (!requireNamespace("brant", quietly = TRUE)) {
-        stop("Package 'brant' is required for Brant test. Please install it with: install.packages('brant')")
-      }
-
-      # Load the package into the namespace
-      library(brant)
-
-      if (verbose) {
-        cat("  Running Brant test for proportional odds assumption...\n")
-      }
-
-      # Run Brant test
-      brant_result <- tryCatch({
-        brant(pom_model)
-      }, error = function(e) {
-        cat("\nDetailed error information:\n")
-        cat("Error message:", e$message, "\n")
-        cat("Model class:", class(pom_model), "\n")
-        cat("Model method:", pom_model$method, "\n")
-        stop(paste("Brant test failed:", e$message))
-      })
-
-      if (verbose) {
-        cat("  Brant test completed. Processing results...\n")
-      }
-
-      # Extract results
-      # The brant test returns a matrix with columns: X2, df, probability
-      # Rows include: Omnibus test + individual predictor tests
-      test_stats <- tryCatch({
-        as.data.frame(brant_result, stringsAsFactors = FALSE)
-      }, error = function(e) {
-        cat("Error details:\n")
-        cat("  brant_result class:", class(brant_result), "\n")
-        cat("  brant_result type:", typeof(brant_result), "\n")
-        stop(paste("Failed to convert brant result to data frame:", e$message))
-      })
-
-      # Rename columns for clarity (avoid name conflict with df() function)
-      colnames(test_stats) <- c("chi_squared", "degrees_of_freedom", "p_value")
-
-      # Add interpretation column
-      test_stats$interpretation <- ifelse(
-        test_stats$p_value < 0.05,
-        "VIOLATION: Proportional odds assumption violated",
-        "OK: Proportional odds assumption holds"
-      )
-
-      # Create summary
-      # Note: rownames should have "Omnibus" (capital O) based on brant output
-      omnibus_row <- which(rownames(test_stats) == "Omnibus")
-      if (length(omnibus_row) == 0) {
-        # Try lowercase if uppercase not found
-        omnibus_row <- which(tolower(rownames(test_stats)) == "omnibus")
-      }
-
-      summary_result <- list(
-        test_statistics = test_stats,
-        omnibus_statistic = test_stats[omnibus_row, "chi_squared"],
-        omnibus_df = test_stats[omnibus_row, "degrees_of_freedom"],
-        omnibus_p_value = test_stats[omnibus_row, "p_value"],
-        omnibus_interpretation = ifelse(
-          test_stats[omnibus_row, "p_value"] < 0.05,
-          "VIOLATION: Overall proportional odds assumption violated",
-          "OK: Overall proportional odds assumption holds"
-        ),
-        violations = test_stats[test_stats$p_value < 0.05 & seq_len(nrow(test_stats)) != omnibus_row, , drop = FALSE],
-        has_violations = any(test_stats$p_value[seq_len(nrow(test_stats)) != omnibus_row] < 0.05)
-      )
-
-      if (verbose) {
-        cat("\n  Brant Test Results:\n")
-        cat("  ==================\n\n")
-        cat("  Omnibus Test:\n")
-        cat("    Chi-squared =", round(summary_result$omnibus_statistic, 4), "\n")
-        cat("    df =", summary_result$omnibus_df, "\n")
-        cat("    p-value =", format.pval(summary_result$omnibus_p_value, digits = 4), "\n")
-        cat("    Result:", summary_result$omnibus_interpretation, "\n\n")
-
-        cat("  Individual Variable Tests:\n")
-        individual_tests <- test_stats[seq_len(nrow(test_stats)) != omnibus_row, , drop = FALSE]
-        for (i in seq_len(nrow(individual_tests))) {
-          var_name <- rownames(individual_tests)[i]
-          cat("    ", var_name, ":\n", sep = "")
-          cat("      Chi-squared =", round(individual_tests[i, "chi_squared"], 4), "\n")
-          cat("      df =", individual_tests[i, "degrees_of_freedom"], "\n")
-          cat("      p-value =", format.pval(individual_tests[i, "p_value"], digits = 4), "\n")
-          cat("      Result:", individual_tests[i, "interpretation"], "\n")
+        # Check that all predictor variables have at least 2 levels
+        predictor_vars <- all.vars(formula[[3]])  # Get variable names from RHS
+        for (pred_var in predictor_vars) {
+          if (pred_var %in% names(data)) {
+            n_levels <- length(unique(data[[pred_var]]))
+            if (n_levels < 2) {
+              stop(paste("Predictor variable", pred_var, "has only", n_levels,
+                        "level(s). All predictors must have at least 2 levels."))
+            }
+          }
         }
-        cat("\n")
 
-        if (summary_result$has_violations) {
-          cat("  WARNING: Proportional odds assumption violated for one or more predictors.\n")
-          cat("  Consider:\n")
-          cat("    1. Partial Proportional Odds Model (PPOM)\n")
-          cat("    2. Multinomial Logistic Regression\n")
-          cat("    3. Examining/transforming problematic predictors\n\n")
+        # Check cell counts
+        cell_check <- check_cell_counts(data, outcome_var, min_count = 10)
+        if (cell_check$has_issues && verbose) {
+          cat("  WARNING: Some outcome categories have fewer than 10 observations:\n")
+          print(cell_check$issues)
+          cat("\n")
+        }
+
+        # Fit the model
+        if (verbose) {
+          cat("  Fitting proportional odds model with", link, "link...\n")
+        }
+
+        model <- tryCatch({
+          MASS::polr(formula, data = data, Hess = TRUE, method = polr_method)
+        }, error = function(e) {
+          stop(paste("Model fitting failed:", e$message))
+        })
+
+        # Extract coefficients and standard errors
+        coef_table <- coef(summary(model))
+
+        # Calculate z-critical value for confidence intervals
+        alpha <- 1 - confidence_level
+        z_crit <- qnorm(1 - alpha/2)
+
+        # Process coefficients (predictors only, not thresholds)
+        n_predictors <- nrow(coef_table) - (nlevels(data[[outcome_var]]) - 1)
+
+        if (n_predictors > 0) {
+          predictor_coefs <- coef_table[1:n_predictors, , drop = FALSE]
+
+          # Create results dataframe
+          results <- tibble(
+            variable = rownames(predictor_coefs),
+            log_odds = predictor_coefs[, "Value"],
+            std_error = predictor_coefs[, "Std. Error"],
+            t_value = predictor_coefs[, "t value"],
+            p_value = 2 * pnorm(abs(predictor_coefs[, "t value"]), lower.tail = FALSE),
+            # Calculate confidence intervals
+            ci_lower_log_odds = log_odds - z_crit * std_error,
+            ci_upper_log_odds = log_odds + z_crit * std_error,
+            # Convert to odds ratios
+            odds_ratio = exp(log_odds),
+            ci_lower_or = exp(ci_lower_log_odds),
+            ci_upper_or = exp(ci_upper_log_odds)
+          )
         } else {
-          cat("  GOOD NEWS: Proportional odds assumption holds for all predictors.\n")
-          cat("  The POM model is appropriate for this data.\n\n")
+          results <- tibble(
+            variable = character(),
+            log_odds = numeric(),
+            std_error = numeric(),
+            t_value = numeric(),
+            p_value = numeric(),
+            ci_lower_log_odds = numeric(),
+            ci_upper_log_odds = numeric(),
+            odds_ratio = numeric(),
+            ci_lower_or = numeric(),
+            ci_upper_or = numeric()
+          )
         }
+
+        # Extract thresholds (intercepts)
+        threshold_indices <- (n_predictors + 1):nrow(coef_table)
+        thresholds <- tibble(
+          threshold = rownames(coef_table)[threshold_indices],
+          value = coef_table[threshold_indices, "Value"],
+          std_error = coef_table[threshold_indices, "Std. Error"]
+        )
+
+        # Calculate model fit statistics
+        model_stats <- list(
+          aic = AIC(model),
+          bic = BIC(model),
+          log_likelihood = logLik(model)[1],
+          df = attr(logLik(model), "df"),
+          n_obs = nobs(model),
+          n_predictors = n_predictors,
+          link_function = link,
+          confidence_level = confidence_level
+        )
+
+        if (verbose) {
+          cat("  Model fitted successfully\n")
+          cat("  AIC:", round(model_stats$aic, 2), "\n")
+          cat("  BIC:", round(model_stats$bic, 2), "\n")
+          cat("  Log-likelihood:", round(model_stats$log_likelihood, 2), "\n\n")
+        }
+
+        return(list(
+          model = model,
+          coefficients = results,
+          thresholds = thresholds,
+          model_stats = model_stats,
+          cell_counts = cell_check$all_counts,
+          formula = formula,
+          outcome_var = outcome_var
+        ))
       }
 
-      return(summary_result)
-    }
+    # BRANT TEST FOR PROPORTIONAL ODDS ASSUMPTION
+      perform_brant_test <- function(pom_model, verbose = TRUE) {
+        # Load brant package
+        if (!requireNamespace("brant", quietly = TRUE)) {
+          stop("Package 'brant' is required for Brant test. Please install it with: install.packages('brant')")
+        }
 
-  # TEST BRANT TEST FUNCTION
-    test_brant <- FALSE
+        # Load the package into the namespace
+        library(brant)
 
-    # NOTE: The brant package has compatibility issues in some environments.
-    # If you encounter "object of type 'closure' is not subsettable" error,
-    # consider alternative approaches:
-    # 1. Test proportional odds using likelihood ratio tests comparing POM to PPOM
-    # 2. Visual inspection of parallel lines assumption using effect plots
-    # 3. Use the ordinal package's clm() function which has built-in tests
-    #
-    # The perform_brant_test function is implemented and ready to use when
-    # the brant package works correctly in your environment.
-
-    if (test_brant) {
-      cat("\n=== TESTING BRANT TEST FUNCTION ===\n\n")
-
-      # Create test dataset
-      first_category <- unique(awareness.tb$category)[1]
-      test_data <- awareness.tb %>%
-        filter(category == first_category) %>%
-        select(value.num, age, sex) %>%
-        drop_na() %>%
-        mutate(sex = factor(sex))
-
-      cat("Test data prepared: n =", nrow(test_data), "\n\n")
-
-      if (nrow(test_data) > 0) {
-        # Fit POM model
-        cat("Fitting POM model...\n")
-        test_formula <- value.num ~ age + sex
-        pom_result <- fit_pom(test_formula, test_data, link = "logit",
-                              confidence_level = 0.95, verbose = FALSE)
-
-        cat("Model fitted. Now running Brant test...\n")
+        if (verbose) {
+          cat("  Running Brant test for proportional odds assumption...\n")
+        }
 
         # Run Brant test
-        brant_result <- perform_brant_test(pom_result$model, verbose = TRUE)
+        brant_result <- tryCatch({
+          brant(pom_model)
+        }, error = function(e) {
+          cat("\nDetailed error information:\n")
+          cat("Error message:", e$message, "\n")
+          cat("Model class:", class(pom_model), "\n")
+          cat("Model method:", pom_model$method, "\n")
+          stop(paste("Brant test failed:", e$message))
+        })
 
-        cat("Brant test complete.\n")
-        cat("Has violations:", brant_result$has_violations, "\n")
-
-        if (brant_result$has_violations) {
-          cat("Variables with violations:\n")
-          print(rownames(brant_result$violations))
+        if (verbose) {
+          cat("  Brant test completed. Processing results...\n")
         }
 
-        cat("\n=== TEST COMPLETE ===\n\n")
-      } else {
-        cat("ERROR: No data available for testing.\n\n")
-      }
-    }
+        # Extract results
+        # The brant test returns a matrix with columns: X2, df, probability
+        # Rows include: Omnibus test + individual predictor tests
+        test_stats <- tryCatch({
+          as.data.frame(brant_result, stringsAsFactors = FALSE)
+        }, error = function(e) {
+          cat("Error details:\n")
+          cat("  brant_result class:", class(brant_result), "\n")
+          cat("  brant_result type:", typeof(brant_result), "\n")
+          stop(paste("Failed to convert brant result to data frame:", e$message))
+        })
 
-  # TEST FIT_POM FUNCTION
-    test_fit_pom <- FALSE
+        # Rename columns for clarity (avoid name conflict with df() function)
+        colnames(test_stats) <- c("chi_squared", "degrees_of_freedom", "p_value")
 
-    if (test_fit_pom) {
-      cat("\n=== TESTING FIT_POM FUNCTION ===\n\n")
-
-      # Check available categories in awareness data
-      cat("Available categories in awareness.tb:\n")
-      print(unique(awareness.tb$category))
-      cat("\n")
-
-      # Create test dataset using awareness data (use first available category)
-      first_category <- unique(awareness.tb$category)[1]
-      cat("Using category:", first_category, "\n\n")
-
-      test_data <- awareness.tb %>%
-        filter(category == first_category) %>%
-        select(value.num, shown.infographic, age, sex) %>%
-        drop_na() %>%
-        mutate(
-          # Ensure shown.infographic is a factor
-          shown.infographic = factor(shown.infographic)
+        # Add interpretation column
+        test_stats$interpretation <- ifelse(
+          test_stats$p_value < 0.05,
+          "VIOLATION: Proportional odds assumption violated",
+          "OK: Proportional odds assumption holds"
         )
 
-      cat("Test data prepared: n =", nrow(test_data), "\n")
-      cat("Outcome levels:", levels(factor(test_data$value.num)), "\n\n")
+        # Create summary
+        # Note: rownames should have "Omnibus" (capital O) based on brant output
+        omnibus_row <- which(rownames(test_stats) == "Omnibus")
+        if (length(omnibus_row) == 0) {
+          # Try lowercase if uppercase not found
+          omnibus_row <- which(tolower(rownames(test_stats)) == "omnibus")
+        }
 
-      # If still no data, skip test
-      if (nrow(test_data) > 0) {
-        # Test 1: Logit link (default)
-        cat("TEST 1: Logit link\n")
-        test_formula <- value.num ~ age + sex
-        result_logit <- fit_pom(test_formula, test_data, link = "logit",
-                                confidence_level = 0.95, verbose = TRUE)
+        summary_result <- list(
+          test_statistics = test_stats,
+          omnibus_statistic = test_stats[omnibus_row, "chi_squared"],
+          omnibus_df = test_stats[omnibus_row, "degrees_of_freedom"],
+          omnibus_p_value = test_stats[omnibus_row, "p_value"],
+          omnibus_interpretation = ifelse(
+            test_stats[omnibus_row, "p_value"] < 0.05,
+            "VIOLATION: Overall proportional odds assumption violated",
+            "OK: Overall proportional odds assumption holds"
+          ),
+          violations = test_stats[test_stats$p_value < 0.05 & seq_len(nrow(test_stats)) != omnibus_row, , drop = FALSE],
+          has_violations = any(test_stats$p_value[seq_len(nrow(test_stats)) != omnibus_row] < 0.05)
+        )
 
-        cat("Coefficients:\n")
-        print(result_logit$coefficients)
+        if (verbose) {
+          cat("\n  Brant Test Results:\n")
+          cat("  ==================\n\n")
+          cat("  Omnibus Test:\n")
+          cat("    Chi-squared =", round(summary_result$omnibus_statistic, 4), "\n")
+          cat("    df =", summary_result$omnibus_df, "\n")
+          cat("    p-value =", format.pval(summary_result$omnibus_p_value, digits = 4), "\n")
+          cat("    Result:", summary_result$omnibus_interpretation, "\n\n")
+
+          cat("  Individual Variable Tests:\n")
+          individual_tests <- test_stats[seq_len(nrow(test_stats)) != omnibus_row, , drop = FALSE]
+          for (i in seq_len(nrow(individual_tests))) {
+            var_name <- rownames(individual_tests)[i]
+            cat("    ", var_name, ":\n", sep = "")
+            cat("      Chi-squared =", round(individual_tests[i, "chi_squared"], 4), "\n")
+            cat("      df =", individual_tests[i, "degrees_of_freedom"], "\n")
+            cat("      p-value =", format.pval(individual_tests[i, "p_value"], digits = 4), "\n")
+            cat("      Result:", individual_tests[i, "interpretation"], "\n")
+          }
+          cat("\n")
+
+          if (summary_result$has_violations) {
+            cat("  WARNING: Proportional odds assumption violated for one or more predictors.\n")
+            cat("  Consider:\n")
+            cat("    1. Partial Proportional Odds Model (PPOM)\n")
+            cat("    2. Multinomial Logistic Regression\n")
+            cat("    3. Examining/transforming problematic predictors\n\n")
+          } else {
+            cat("  GOOD NEWS: Proportional odds assumption holds for all predictors.\n")
+            cat("  The POM model is appropriate for this data.\n\n")
+          }
+        }
+
+        return(summary_result)
+      }
+
+    # CALCULATE RESIDUALS FOR PROPORTIONAL ODDS MODEL
+      calculate_pom_residuals <- function(pom_result, verbose = TRUE) {
+        # Extract model object
+        model <- pom_result$model
+
+        if (verbose) {
+          cat("  Calculating residuals for POM...\n")
+        }
+
+        # Get model data
+        model_data <- model$model
+        n_obs <- nrow(model_data)
+
+        # Extract outcome variable
+        outcome_var <- pom_result$outcome_var
+        y_observed <- as.numeric(model_data[[outcome_var]])
+
+        # Calculate linear predictor (X * beta)
+        # For polr, the linear predictor is: X %*% beta (without intercepts/thresholds)
+        X <- model.matrix(model)[, -1, drop = FALSE]  # Remove intercept column if present
+        beta <- coef(model)
+
+        # Handle case where model.matrix includes factor levels
+        # polr coefficients don't include intercept, so align them
+        if (ncol(X) == length(beta)) {
+          linear_predictor <- as.vector(X %*% beta)
+        } else {
+          # If dimensions don't match, reconstruct more carefully
+          linear_predictor <- predict(model, type = "linear")
+        }
+
+        # Get predicted probabilities for each category
+        pred_probs <- predict(model, type = "probs")
+
+        # If pred_probs is a vector (single observation), convert to matrix
+        if (is.vector(pred_probs)) {
+          pred_probs <- matrix(pred_probs, nrow = 1)
+        }
+
+        # Get predicted class (mode of predicted probabilities)
+        pred_class_num <- apply(pred_probs, 1, which.max)
+
+        # Calculate Pearson residuals
+        # For ordinal regression: (observed indicator - predicted prob) / sqrt(predicted prob * (1 - predicted prob))
+        # We'll calculate this for the observed category
+        pearson_residuals <- numeric(n_obs)
+
+        for (i in seq_len(n_obs)) {
+          obs_category <- y_observed[i]
+          p_obs <- pred_probs[i, obs_category]
+
+          # Pearson residual for observed category
+          pearson_residuals[i] <- (1 - p_obs) / sqrt(p_obs * (1 - p_obs))
+        }
+
+        # Calculate deviance residuals
+        # Deviance residual = sqrt(-2 * log(predicted probability of observed category))
+        # Sign matches whether observed is above or below predicted mode
+        deviance_residuals <- numeric(n_obs)
+
+        for (i in seq_len(n_obs)) {
+          obs_category <- y_observed[i]
+          p_obs <- pred_probs[i, obs_category]
+
+          # Deviance component
+          dev_component <- sqrt(-2 * log(p_obs))
+
+          # Add sign based on observed vs predicted
+          sign_val <- ifelse(obs_category > pred_class_num[i], 1,
+                            ifelse(obs_category < pred_class_num[i], -1, 0))
+
+          deviance_residuals[i] <- sign_val * dev_component
+        }
+
+        # Create result tibble with observation-level data
+        residuals_tb <- tibble(
+          obs_index = seq_len(n_obs),
+          observed = y_observed,
+          predicted_class = pred_class_num,
+          linear_predictor = linear_predictor,
+          pearson_residual = pearson_residuals,
+          deviance_residual = deviance_residuals
+        )
+
+        # Add predicted probabilities as separate columns
+        prob_cols <- as_tibble(pred_probs)
+        colnames(prob_cols) <- paste0("prob_class_", seq_len(ncol(pred_probs)))
+
+        residuals_tb <- bind_cols(residuals_tb, prob_cols)
+
+        if (verbose) {
+          cat("  Residuals calculated for", n_obs, "observations\n")
+          cat("  Pearson residuals range: [",
+              round(min(pearson_residuals), 3), ",",
+              round(max(pearson_residuals), 3), "]\n", sep = "")
+          cat("  Deviance residuals range: [",
+              round(min(deviance_residuals), 3), ",",
+              round(max(deviance_residuals), 3), "]\n\n", sep = "")
+        }
+
+        return(residuals_tb)
+      }
+
+    # TEST BRANT TEST FUNCTION
+      test_brant <- FALSE
+
+      # NOTE: The brant package has compatibility issues in some environments.
+      # If you encounter "object of type 'closure' is not subsettable" error,
+      # consider alternative approaches:
+      # 1. Test proportional odds using likelihood ratio tests comparing POM to PPOM
+      # 2. Visual inspection of parallel lines assumption using effect plots
+      # 3. Use the ordinal package's clm() function which has built-in tests
+      #
+      # The perform_brant_test function is implemented and ready to use when
+      # the brant package works correctly in your environment.
+
+      if (test_brant) {
+        cat("\n=== TESTING BRANT TEST FUNCTION ===\n\n")
+
+        # Create test dataset
+        first_category <- unique(awareness.tb$category)[1]
+        test_data <- awareness.tb %>%
+          filter(category == first_category) %>%
+          select(value.num, age, sex) %>%
+          drop_na() %>%
+          mutate(sex = factor(sex))
+
+        cat("Test data prepared: n =", nrow(test_data), "\n\n")
+
+        if (nrow(test_data) > 0) {
+          # Fit POM model
+          cat("Fitting POM model...\n")
+          test_formula <- value.num ~ age + sex
+          pom_result <- fit_pom(test_formula, test_data, link = "logit",
+                                confidence_level = 0.95, verbose = FALSE)
+
+          cat("Model fitted. Now running Brant test...\n")
+
+          # Run Brant test
+          brant_result <- perform_brant_test(pom_result$model, verbose = TRUE)
+
+          cat("Brant test complete.\n")
+          cat("Has violations:", brant_result$has_violations, "\n")
+
+          if (brant_result$has_violations) {
+            cat("Variables with violations:\n")
+            print(rownames(brant_result$violations))
+          }
+
+          cat("\n=== TEST COMPLETE ===\n\n")
+        } else {
+          cat("ERROR: No data available for testing.\n\n")
+        }
+      }
+
+    # TEST FIT_POM FUNCTION
+      test_fit_pom <- FALSE
+
+      if (test_fit_pom) {
+        cat("\n=== TESTING FIT_POM FUNCTION ===\n\n")
+
+        # Check available categories in awareness data
+        cat("Available categories in awareness.tb:\n")
+        print(unique(awareness.tb$category))
         cat("\n")
 
-        # Test 2: Probit link
-        cat("TEST 2: Probit link\n")
-        result_probit <- fit_pom(test_formula, test_data, link = "probit",
-                                 confidence_level = 0.95, verbose = TRUE)
+        # Create test dataset using awareness data (use first available category)
+        first_category <- unique(awareness.tb$category)[1]
+        cat("Using category:", first_category, "\n\n")
 
-        cat("Coefficients:\n")
-        print(result_probit$coefficients)
-        cat("\n")
+        test_data <- awareness.tb %>%
+          filter(category == first_category) %>%
+          select(value.num, shown.infographic, age, sex) %>%
+          drop_na() %>%
+          mutate(
+            # Ensure shown.infographic is a factor
+            shown.infographic = factor(shown.infographic)
+          )
 
-        # Test 3: Complementary log-log link
-        cat("TEST 3: Complementary log-log link\n")
-        result_cloglog <- fit_pom(test_formula, test_data, link = "cloglog",
+        cat("Test data prepared: n =", nrow(test_data), "\n")
+        cat("Outcome levels:", levels(factor(test_data$value.num)), "\n\n")
+
+        # If still no data, skip test
+        if (nrow(test_data) > 0) {
+          # Test 1: Logit link (default)
+          cat("TEST 1: Logit link\n")
+          test_formula <- value.num ~ age + sex
+          result_logit <- fit_pom(test_formula, test_data, link = "logit",
                                   confidence_level = 0.95, verbose = TRUE)
 
-        cat("Coefficients:\n")
-        print(result_cloglog$coefficients)
-        cat("\n")
+          cat("Coefficients:\n")
+          print(result_logit$coefficients)
+          cat("\n")
 
-        # Compare AIC/BIC across link functions
-        cat("LINK FUNCTION COMPARISON:\n")
-        comparison <- tibble(
-          link = c("logit", "probit", "cloglog"),
-          AIC = c(result_logit$model_stats$aic,
-                  result_probit$model_stats$aic,
-                  result_cloglog$model_stats$aic),
-          BIC = c(result_logit$model_stats$bic,
-                  result_probit$model_stats$bic,
-                  result_cloglog$model_stats$bic),
-          logLik = c(result_logit$model_stats$log_likelihood,
-                     result_probit$model_stats$log_likelihood,
-                     result_cloglog$model_stats$log_likelihood)
-        ) %>%
-          arrange(AIC)
+          # Test 2: Probit link
+          cat("TEST 2: Probit link\n")
+          result_probit <- fit_pom(test_formula, test_data, link = "probit",
+                                  confidence_level = 0.95, verbose = TRUE)
 
-        print(comparison)
-        cat("\nBest link function by AIC:", comparison$link[1], "\n")
-        cat("\n=== TEST COMPLETE ===\n\n")
-      } else {
-        cat("ERROR: No data available for testing. Skipping test.\n\n")
+          cat("Coefficients:\n")
+          print(result_probit$coefficients)
+          cat("\n")
+
+          # Test 3: Complementary log-log link
+          cat("TEST 3: Complementary log-log link\n")
+          result_cloglog <- fit_pom(test_formula, test_data, link = "cloglog",
+                                    confidence_level = 0.95, verbose = TRUE)
+
+          cat("Coefficients:\n")
+          print(result_cloglog$coefficients)
+          cat("\n")
+
+          # Compare AIC/BIC across link functions
+          cat("LINK FUNCTION COMPARISON:\n")
+          comparison <- tibble(
+            link = c("logit", "probit", "cloglog"),
+            AIC = c(result_logit$model_stats$aic,
+                    result_probit$model_stats$aic,
+                    result_cloglog$model_stats$aic),
+            BIC = c(result_logit$model_stats$bic,
+                    result_probit$model_stats$bic,
+                    result_cloglog$model_stats$bic),
+            logLik = c(result_logit$model_stats$log_likelihood,
+                      result_probit$model_stats$log_likelihood,
+                      result_cloglog$model_stats$log_likelihood)
+          ) %>%
+            arrange(AIC)
+
+          print(comparison)
+          cat("\nBest link function by AIC:", comparison$link[1], "\n")
+          cat("\n=== TEST COMPLETE ===\n\n")
+        } else {
+          cat("ERROR: No data available for testing. Skipping test.\n\n")
+        }
       }
-    }
 
 
-# 5-REGRESSIONS -------------------------------------------------------------------------------
+  #Regressions ----
 
-  # STEP 1: SINGLE REGRESSION EXAMPLE
-  
-    awareness_aggregated.tb <- awareness.tb %>% # Calculate mean awareness score per respondent
-      group_by(across(all_of(id.varnames))) %>%
-      summarize(
-        mean_awareness = mean(value.num, na.rm = TRUE),
-        n_responses = n(),
-        .groups = "drop"
-      )
+  # SECTION 5A: DIAGNOSTIC & VISUALIZATION FUNCTIONS ----
 
-    # Define exclusions and base categories for all variables
-      var_config <- list(
-        mean_awareness = list(exclude = c(), base = NA),
+    # These functions create diagnostic plots and coefficient plots for regression models
+
+    # PLOT POM DIAGNOSTICS (2x2 panel)
+      plot_pom_diagnostics <- function(pom_result, residuals_tb, plot_title = NULL) {
+        # Create a 2x2 panel of diagnostic plots for proportional odds models
+        #
+        # Args:
+        #   pom_result: Output from fit_pom() containing model object and stats
+        #   residuals_tb: Output from calculate_pom_residuals() with residuals and predictions
+        #   plot_title: Optional main title for the plot panel
+        #
+        # Returns:
+        #   A ggplot object (combined 2x2 panel)
+
+        # Load required packages
+        if (!requireNamespace("ggplot2", quietly = TRUE)) {
+          stop("Package 'ggplot2' is required for plotting.")
+        }
+        if (!requireNamespace("gridExtra", quietly = TRUE)) {
+          stop("Package 'gridExtra' is required for plot panels. Install with: install.packages('gridExtra')")
+        }
+        if (!requireNamespace("grid", quietly = TRUE)) {
+          stop("Package 'grid' is required for plot annotations.")
+        }
+
+        library(ggplot2)
+        library(gridExtra)
+        library(grid)
+
+        # Extract model information for plot titles
+        model_label <- if (!is.null(plot_title)) {
+          plot_title
+        } else {
+          paste("POM Diagnostics:", pom_result$outcome_var)
+        }
+
+        n_obs <- nrow(residuals_tb)
+
+        # PLOT 1: Residuals vs Fitted (Linear Predictor)
+        plot1 <- ggplot(residuals_tb, aes(x = linear_predictor, y = deviance_residual)) +
+          geom_point(alpha = 0.5, size = 1.5) +
+          geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+          geom_smooth(method = "loess", se = TRUE, color = "blue", linewidth = 0.8) +
+          labs(
+            title = "Residuals vs Fitted",
+            x = "Linear Predictor",
+            y = "Deviance Residuals"
+          ) +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(size = 10, face = "bold"),
+            axis.title = element_text(size = 9)
+          )
+
+        # PLOT 2: Q-Q Plot of Deviance Residuals
+        # Calculate theoretical quantiles
+        residuals_sorted <- sort(residuals_tb$deviance_residual)
+        theoretical_quantiles <- qnorm(ppoints(length(residuals_sorted)))
+
+        qq_data <- tibble(
+          theoretical = theoretical_quantiles,
+          sample = residuals_sorted
+        )
+
+        plot2 <- ggplot(qq_data, aes(x = theoretical, y = sample)) +
+          geom_point(alpha = 0.5, size = 1.5) +
+          geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+          labs(
+            title = "Normal Q-Q Plot",
+            x = "Theoretical Quantiles",
+            y = "Sample Quantiles (Deviance Residuals)"
+          ) +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(size = 10, face = "bold"),
+            axis.title = element_text(size = 9)
+          )
+
+        # PLOT 3: Scale-Location Plot (sqrt of absolute standardized residuals)
+        residuals_tb <- residuals_tb %>%
+          mutate(
+            sqrt_abs_std_residual = sqrt(abs(deviance_residual / sd(deviance_residual)))
+          )
+
+        plot3 <- ggplot(residuals_tb, aes(x = linear_predictor, y = sqrt_abs_std_residual)) +
+          geom_point(alpha = 0.5, size = 1.5) +
+          geom_smooth(method = "loess", se = TRUE, color = "blue", linewidth = 0.8) +
+          labs(
+            title = "Scale-Location",
+            x = "Linear Predictor",
+            y = expression(sqrt("|Standardized Residuals|"))
+          ) +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(size = 10, face = "bold"),
+            axis.title = element_text(size = 9)
+          )
+
+        # PLOT 4: Observed vs Predicted Probabilities
+        # Calculate average predicted probability for observed category
+        obs_pred_prob <- numeric(n_obs)
+        for (i in seq_len(n_obs)) {
+          obs_category <- residuals_tb$observed[i]
+          prob_col_name <- paste0("prob_class_", obs_category)
+          obs_pred_prob[i] <- residuals_tb[[prob_col_name]][i]
+        }
+
+        residuals_tb <- residuals_tb %>%
+          mutate(prob_observed_category = obs_pred_prob)
+
+        # Create jittered observed values for better visualization
+        residuals_tb <- residuals_tb %>%
+          mutate(observed_jittered = observed + runif(n(), -0.1, 0.1))
+
+        plot4 <- ggplot(residuals_tb, aes(x = predicted_class, y = observed_jittered)) +
+          geom_jitter(aes(color = prob_observed_category), alpha = 0.5, width = 0.2, height = 0.2, size = 1.5) +
+          geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+          scale_color_gradient(low = "red", high = "blue", name = "P(Observed)") +
+          labs(
+            title = "Observed vs Predicted Class",
+            x = "Predicted Class",
+            y = "Observed Class"
+          ) +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(size = 10, face = "bold"),
+            axis.title = element_text(size = 9),
+            legend.position = "right",
+            legend.title = element_text(size = 8),
+            legend.text = element_text(size = 7)
+          )
+
+        # Combine all plots into 2x2 panel
+        combined_plot <- grid.arrange(
+          plot1, plot2, plot3, plot4,
+          ncol = 2, nrow = 2,
+          top = textGrob(
+            model_label,
+            gp = gpar(fontsize = 12, fontface = "bold")
+          )
+        )
+
+        return(combined_plot)
+      }
+
+    # PLOT POM COEFFICIENTS (forest plot)
+      # TODO: Implement plot_pom_coefficients(pom_result, title)
+      # Will create forest plot showing odds ratios with confidence intervals
+
+
+  # SECTION 5B: SINGLE-MODEL ORCHESTRATION FUNCTIONS ----
+
+    # These functions orchestrate the complete analysis for a single regression model
+
+    # RUN SINGLE POM ANALYSIS
+      # TODO: Implement run_single_pom_analysis(config_row)
+      # Will:
+      #   1. Prepare data using prepare_regression_data()
+      #   2. Build formula using build_formula()
+      #   3. Check cell counts
+      #   4. Fit POM using fit_pom()
+      #   5. Calculate VIF
+      #   6. Run Brant test (if available)
+      #   7. Calculate residuals
+      #   8. Generate diagnostic plots
+      #   9. Generate coefficient plot
+      #  10. Return comprehensive results object
+
+
+  # SECTION 5C: MULTI-MODEL PIPELINE FUNCTIONS ----
+
+    # These functions loop through config table and run multiple models
+
+    # RUN ALL CONFIGURED REGRESSIONS
+      # TODO: Implement run_all_regressions(regression.configs.tb)
+      # Will:
+      #   1. Filter for implement = TRUE
+      #   2. Loop through each config row
+      #   3. Handle split_by_category logic
+      #   4. Call run_single_pom_analysis() for each model
+      #   5. Collect results
+      #   6. Generate summary tables
+
+
+  # SECTION 5D: EXPORT FUNCTIONS ----
+
+    # These functions export results to files
+
+    # EXPORT REGRESSION RESULTS
+      # TODO: Implement export_regression_results(results_list, output_dir)
+      # Will export:
+      #   1. PDF with all diagnostic plots
+      #   2. PDF with all coefficient plots
+      #   3. Excel/CSV with coefficient tables
+      #   4. Excel/CSV with model fit statistics
+      #   5. Excel/CSV with assumption test results
+
+
+  # SECTION 5E: EXAMPLE/TEST CODE ----
+
+    # This section contains one-off example code for testing and development
+    # Will be replaced with function calls as we build out the pipeline
+
+    # EXAMPLE 1: OLS REGRESSION (original example - kept for reference)
+    run_ols_example <- FALSE
+
+    if (run_ols_example) {
+      # Calculate mean awareness score per respondent
+      example_outcome_data.tb <- awareness.tb %>%
+        group_by(across(all_of(id.varnames))) %>%
+        summarize(
+          mean_outcome = mean(value.num, na.rm = TRUE),
+          n_responses = n(),
+          .groups = "drop"
+        )
+
+      # Define exclusions and base categories for all variables
+      example_var_config <- list(
+        mean_outcome = list(exclude = c(), base = NA),
         age = list(exclude = c(), base = NA),
         sex = list(exclude = c("Prefer not to say"), base = "Male"),
         ethnicity = list(exclude = c(), base = "White"),
@@ -1780,56 +2093,56 @@
         political.affiliation = list(exclude = c("Don't Know", "Other", "Would not vote"), base = "USA-Democrat")
       )
 
-    # Get all variable names from config (excluding mean_awareness which is already in awareness_aggregated.tb)
-      vars_to_join <- setdiff(names(var_config), "mean_awareness")
+      # Get all variable names from config (excluding outcome which is already in data)
+      vars_to_join <- setdiff(names(example_var_config), "mean_outcome")
 
-    # Join all variables from data.tb
-      awareness_aggregated.tb <- awareness_aggregated.tb %>%
+      # Join all variables from data.tb
+      example_outcome_data.tb <- example_outcome_data.tb %>%
         left_join(
           data.tb %>% select(all_of(c(id.varnames, vars_to_join))),
           by = id.varnames
         )
 
-    # Apply filtering for all variables
-      regression_data.tb <- awareness_aggregated.tb
+      # Apply filtering for all variables
+      example_data.tb <- example_outcome_data.tb
 
-      for (var_name in names(var_config)) {
-        if (var_name %in% names(regression_data.tb)) {
-          exclude_vals <- var_config[[var_name]]$exclude
+      for (var_name in names(example_var_config)) {
+        if (var_name %in% names(example_data.tb)) {
+          exclude_vals <- example_var_config[[var_name]]$exclude
 
           # Filter out excluded values and NAs
-          regression_data.tb <- regression_data.tb %>%
+          example_data.tb <- example_data.tb %>%
             filter(!is.na(.data[[var_name]]))
 
           if (length(exclude_vals) > 0) {
-            regression_data.tb <- regression_data.tb %>%
+            example_data.tb <- example_data.tb %>%
               filter(!(.data[[var_name]] %in% exclude_vals))
           }
         }
       }
 
-    # Set base categories for factor variables
-      for (var_name in names(var_config)) {
-        base_val <- var_config[[var_name]]$base
+      # Set base categories for factor variables
+      for (var_name in names(example_var_config)) {
+        base_val <- example_var_config[[var_name]]$base
 
-        if (!is.na(base_val) && var_name %in% names(regression_data.tb)) {
+        if (!is.na(base_val) && var_name %in% names(example_data.tb)) {
           # Get all unique values for this variable
-          all_vals <- unique(regression_data.tb[[var_name]])
+          all_vals <- unique(example_data.tb[[var_name]])
 
           # Create factor with base category FIRST in levels (becomes reference)
           new_levels <- c(base_val, setdiff(all_vals, base_val))
 
-          regression_data.tb <- regression_data.tb %>%
+          example_data.tb <- example_data.tb %>%
             mutate(!!var_name := factor(.data[[var_name]], levels = new_levels))
         }
       }
 
-    # Remove variables with only 1 unique value (cannot be used in regression)
+      # Remove variables with only 1 unique value (cannot be used in regression)
       vars_to_remove <- c()
 
-      for (var_name in names(var_config)) {
-        if (var_name %in% names(regression_data.tb)) {
-          n_unique <- length(unique(regression_data.tb[[var_name]]))
+      for (var_name in names(example_var_config)) {
+        if (var_name %in% names(example_data.tb)) {
+          n_unique <- length(unique(example_data.tb[[var_name]]))
 
           if (n_unique <= 1) {
             vars_to_remove <- c(vars_to_remove, var_name)
@@ -1844,221 +2157,149 @@
         }
         cat("\n")
 
-        regression_data.tb <- regression_data.tb %>%
+        example_data.tb <- example_data.tb %>%
           select(-all_of(vars_to_remove))
       }
 
-    cat("Sample size for regression:", nrow(regression_data.tb), "\n\n")
+      cat("Sample size for regression:", nrow(example_data.tb), "\n\n")
 
-    # Fit the model
-    lm_model1 <- lm(mean_awareness ~ 
-                    age + sex + ethnicity + nationality.native + language.native + student.status + 
-                    employment.status + political.affiliation,
-                    data = regression_data.tb)
-    
-    cat("MODEL SUMMARY:\n") # Display summary
+      # Fit the model
+      example_model <- lm(mean_outcome ~
+                      age + sex + ethnicity + nationality.native + language.native + student.status +
+                      employment.status + political.affiliation,
+                      data = example_data.tb)
 
-    # Get the summary object
-    model_summary <- summary(lm_model1)
+      cat("MODEL SUMMARY:\n") # Display summary
 
-    # Modify coefficient names to add underscores between variable names and values
-    coef_names <- rownames(model_summary$coefficients)
+      # Get the summary object
+      example_summary <- summary(example_model)
 
-    # Create a function to add underscores
-    add_underscores_to_coefs <- function(coef_name) {
-      # Skip intercept
-      if (coef_name == "(Intercept)") {
-        return(coef_name)
-      }
+      # Modify coefficient names to add underscores between variable names and values
+      coef_names <- rownames(example_summary$coefficients)
 
-      # Sort variable names by length (longest first) to match compound names first
-      var_names_sorted <- names(var_config)[order(-nchar(names(var_config)))]
+      # Create a function to add underscores
+      add_underscores_to_coefs <- function(coef_name) {
+        # Skip intercept
+        if (coef_name == "(Intercept)") {
+          return(coef_name)
+        }
 
-      # For each variable in var_config, check if coef_name starts with it
-      for (var_name in var_names_sorted) {
-        if (startsWith(coef_name, var_name)) {
-          # Extract the value part (everything after the variable name)
-          value_part <- substring(coef_name, nchar(var_name) + 1)
+        # Sort variable names by length (longest first) to match compound names first
+        var_names_sorted <- names(example_var_config)[order(-nchar(names(example_var_config)))]
 
-          # If there's a value part, add underscore
-          if (nchar(value_part) > 0) {
-            return(paste0(var_name, "_", value_part))
-          } else {
-            return(coef_name)  # No value part (e.g., continuous variable)
+        # For each variable in example_var_config, check if coef_name starts with it
+        for (var_name in var_names_sorted) {
+          if (startsWith(coef_name, var_name)) {
+            # Extract the value part (everything after the variable name)
+            value_part <- substring(coef_name, nchar(var_name) + 1)
+
+            # If there's a value part, add underscore
+            if (nchar(value_part) > 0) {
+              return(paste0(var_name, "_", value_part))
+            } else {
+              return(coef_name)  # No value part (e.g., continuous variable)
+            }
           }
         }
+
+        return(coef_name)  # No match found, return original
       }
 
-      return(coef_name)  # No match found, return original
-    }
+      # Apply the function to all coefficient names
+      new_coef_names <- sapply(coef_names, add_underscores_to_coefs, USE.NAMES = FALSE)
+      rownames(example_summary$coefficients) <- new_coef_names
 
-    # Apply the function to all coefficient names
-    new_coef_names <- sapply(coef_names, add_underscores_to_coefs, USE.NAMES = FALSE)
-    rownames(model_summary$coefficients) <- new_coef_names
+      # Print the modified summary
+      print(example_summary)
+    }  # End run_ols_example
 
-    # Print the modified summary
-    print(model_summary)
+    # EXAMPLE 2: POM TEST - Testing fit_pom() and calculate_pom_residuals()
+      test_model_002 <- TRUE
 
-  # STEP 2: COEFFICIENT PLOT WITH TABLE
+      if (test_model_002) {
+        cat("\n=== TESTING MODEL_002 WITH CALCULATE_POM_RESIDUALS ===\n\n")
 
-    # Extract coefficient data for plotting
-    coef_data <- tibble(
-      variable = new_coef_names,
-      estimate = model_summary$coefficients[, "Estimate"],
-      std_error = model_summary$coefficients[, "Std. Error"],
-      t_value = model_summary$coefficients[, "t value"],
-      p_value = model_summary$coefficients[, "Pr(>|t|)"]
-    ) %>%
-      filter(variable != "(Intercept)") %>%  # Remove intercept
-      mutate(
-        # Calculate 95% confidence intervals
-        ci_lower = estimate - 1.96 * std_error,
-        ci_upper = estimate + 1.96 * std_error,
-        # Determine significance for coloring
-        significance = case_when(
-          p_value < 0.001 ~ "p < 0.001",
-          p_value < 0.01 ~ "p < 0.01",
-          p_value < 0.05 ~ "p < 0.05",
-          p_value < 0.1 ~ "p < 0.1",
-          TRUE ~ "Not significant"
-        ),
-        # Make significance an ordered factor for legend
-        significance = factor(
-          significance,
-          levels = c("p < 0.001", "p < 0.01", "p < 0.05", "p < 0.1",
-                    "Not significant")
-        )
-      ) %>%
-      arrange(estimate)  # Sort by coefficient value
+        # Use model_002 configuration from regression.configs.tb
+        # outcome_var: value.num
+        # data_source: awareness.tb
+        # predictors: age, sex, ethnicity, political.affiliation
+        # NOTE: shown.infographic would be constant within a single category,
+        # so we exclude it for this single-category test
 
-    # Reorder variable factor by estimate for plotting
-    coef_data$variable <- factor(coef_data$variable,
-                                 levels = coef_data$variable)
+        # Prepare test data for first category
+        first_category <- unique(awareness.tb$category)[1]
+        cat("Testing with category:", first_category, "\n\n")
 
-    # Wrap long variable names for better readability
-    coef_data <- coef_data %>%
-      mutate(
-        variable = str_replace_all(as.character(variable), "_", "_\n")
-      )
+        test_data_m002 <- awareness.tb %>%
+          filter(category == first_category) %>%
+          select(value.num, age, sex, ethnicity, political.affiliation) %>%
+          drop_na() %>%
+          mutate(
+            sex = factor(sex),
+            ethnicity = factor(ethnicity),
+            political.affiliation = factor(political.affiliation)
+          )
 
-    # Reorder variable factor after wrapping
-    coef_data$variable <- factor(coef_data$variable,
-                                 levels = coef_data$variable)
+        cat("Test data prepared for model_002:\n")
+        cat("  n =", nrow(test_data_m002), "\n")
+        cat("  Outcome levels:", paste(sort(unique(test_data_m002$value.num)), collapse = ", "), "\n")
+        cat("  Predictor levels:\n")
+        cat("    sex:", paste(levels(test_data_m002$sex), collapse = ", "), "\n")
+        cat("    ethnicity:", paste(levels(test_data_m002$ethnicity), collapse = ", "), "\n")
+        cat("    political.affiliation:", length(levels(test_data_m002$political.affiliation)), "levels\n\n")
 
-    # Create the coefficient plot
-    coef_plot <- ggplot(coef_data, aes(x = estimate, y = variable)) +
-      # Add vertical line at zero
-      geom_vline(xintercept = 0, linetype = "dashed",
-                color = "gray50", linewidth = 0.5) +
-      # Add confidence interval lines
-      geom_segment(aes(x = ci_lower, xend = ci_upper,
-                      y = variable, yend = variable),
-                  color = "gray40", linewidth = 0.8) +
-      # Add coefficient point estimate
-      geom_point(aes(color = significance), size = 3) +
-      # Color scale for significance levels
-      scale_color_manual(
-        values = c(
-          "p < 0.001" = "#D32F2F",
-          "p < 0.01" = "#F57C00",
-          "p < 0.05" = "#FBC02D",
-          "p < 0.1" = "#AFB42B",
-          "Not significant" = "gray60"
-        ),
-        name = "Significance",
-        drop = FALSE
-      ) +
-      # Expand x-axis to prevent label cutoff
-      scale_x_continuous(expand = expansion(mult = c(0.15, 0.05))) +
-      # Labels and theme
-      labs(
-        title = "Regression Coefficients: Predictors of Mean Awareness",
-        x = "Coefficient Estimate",
-        y = NULL
-      ) +
-      theme_minimal(base_size = 11) +
-      theme(
-        plot.title = element_text(face = "bold", size = 12, hjust = 0),
-        legend.position = "right",
-        legend.direction = "vertical",
-        legend.title = element_text(size = 10),
-        legend.text = element_text(size = 9),
-        panel.grid.major.y = element_line(color = "gray90"),
-        panel.grid.minor = element_blank(),
-        axis.text.y = element_text(size = 10.5, lineheight = 0.9, hjust = 1),
-        axis.text.x = element_text(size = 9),
-        axis.title.x = element_text(size = 10, margin = margin(t = 8)),
-        plot.margin = margin(10, 10, 5, 10)
-      )
+        if (nrow(test_data_m002) > 0) {
+          # Fit POM model
+          cat("Step 1: Fitting POM model...\n\n")
+          test_formula_m002 <- value.num ~ age + sex + ethnicity + political.affiliation
 
-    # Create summary table with formatted values (reverse order to match plot)
-    # Remove line breaks from variable names for table display
-    table_data <- coef_data %>%
-      mutate(
-        variable_clean = str_replace_all(as.character(variable), "\n", " "),
-        `95% CI` = sprintf("[%.3f, %.3f]", ci_lower, ci_upper),
-        Estimate = sprintf("%.3f", estimate),
-        SE = sprintf("%.3f", std_error),
-        `t value` = sprintf("%.2f", t_value),
-        `p value` = case_when(
-          p_value < 0.001 ~ "<0.001***",
-          p_value < 0.01 ~ sprintf("%.3f**", p_value),
-          p_value < 0.05 ~ sprintf("%.3f*", p_value),
-          p_value < 0.1 ~ sprintf("%.3f.", p_value),
-          TRUE ~ sprintf("%.3f", p_value)
-        )
-      ) %>%
-      select(Variable = variable_clean, Estimate, SE, `95% CI`, `t value`, `p value`) %>%
-      arrange(desc(row_number()))  # Reverse order to match plot (largest on top)
+          pom_result_m002 <- fit_pom(
+            formula = test_formula_m002,
+            data = test_data_m002,
+            link = "logit",
+            confidence_level = 0.95,
+            verbose = TRUE
+          )
 
-    # Create table plot as ggplot
-    library(gridExtra)
+          cat("\nModel fitted successfully!\n\n")
+          cat("Coefficients table:\n")
+          print(pom_result_m002$coefficients)
+          cat("\n")
 
-    # Create table theme with larger text
-    table_theme <- ttheme_minimal(
-      core = list(
-        fg_params = list(hjust = 0, x = 0.05, fontsize = 9),
-        bg_params = list(fill = c(rep(c("gray95", "white"),
-                                      length.out = nrow(table_data))))
-      ),
-      colhead = list(
-        fg_params = list(fontface = "bold", fontsize = 10),
-        bg_params = list(fill = "gray85")
-      )
-    )
+          # Calculate residuals
+          cat("Step 2: Calculating residuals...\n\n")
+          residuals_m002 <- calculate_pom_residuals(pom_result_m002, verbose = TRUE)
 
-    table_grob <- tableGrob(table_data, rows = NULL, theme = table_theme)
+          cat("\nResiduals calculated!\n\n")
+          cat("First 10 rows of residuals table:\n")
+          print(head(residuals_m002, 10))
+          cat("\n")
 
-    # Add model statistics as a caption (center-aligned)
-    model_stats <- sprintf(
-      "Model: R² = %.3f, Adj. R² = %.3f, F(%d,%d) = %.2f, p < %.4f, n = %d",
-      model_summary$r.squared,
-      model_summary$adj.r.squared,
-      model_summary$fstatistic[2],
-      model_summary$fstatistic[3],
-      model_summary$fstatistic[1],
-      pf(model_summary$fstatistic[1],
-         model_summary$fstatistic[2],
-         model_summary$fstatistic[3],
-         lower.tail = FALSE),
-      nrow(regression_data.tb)
-    )
+          cat("Summary statistics for residuals:\n")
+          cat("  Pearson residuals:\n")
+          cat("    Mean:", round(mean(residuals_m002$pearson_residual), 4), "\n")
+          cat("    Median:", round(median(residuals_m002$pearson_residual), 4), "\n")
+          cat("    SD:", round(sd(residuals_m002$pearson_residual), 4), "\n")
+          cat("  Deviance residuals:\n")
+          cat("    Mean:", round(mean(residuals_m002$deviance_residual), 4), "\n")
+          cat("    Median:", round(median(residuals_m002$deviance_residual), 4), "\n")
+          cat("    SD:", round(sd(residuals_m002$deviance_residual), 4), "\n")
+          cat("\n")
 
-    # Create caption as a text grob (center-aligned with larger text)
-    caption_grob <- grid::textGrob(
-      model_stats,
-      gp = grid::gpar(fontsize = 10, fontface = "italic", col = "gray30"),
-      just = "center",
-      x = 0.5
-    )
+          # Test diagnostic plots
+          cat("Step 3: Creating diagnostic plots...\n\n")
+          diagnostic_plot_m002 <- plot_pom_diagnostics(
+            pom_result = pom_result_m002,
+            residuals_tb = residuals_m002,
+            plot_title = paste("Model 002 Diagnostics:", first_category)
+          )
 
-    # Combine plot and table
-    combined_plot <- grid.arrange(
-      coef_plot,
-      caption_grob,
-      table_grob,
-      ncol = 1,
-      heights = c(3, 0.3, 2)
-    )
+          cat("Diagnostic plots created successfully!\n")
+          cat("(View the plot in your R graphics device)\n\n")
 
-    # Note: The combined plot is displayed automatically by grid.arrange
+          cat("=== TEST COMPLETE ===\n\n")
+
+        } else {
+          cat("ERROR: No data available for testing model_002.\n\n")
+        }
+      }
