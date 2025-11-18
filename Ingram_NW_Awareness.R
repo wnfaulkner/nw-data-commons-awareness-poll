@@ -1477,6 +1477,32 @@
           cat("\n")
         }
 
+        # Set base category to largest group for all categorical predictors
+        for (pred_var in predictor_vars) {
+          if (pred_var %in% names(data)) {
+            # Check if variable is categorical (character or factor)
+            if (is.character(data[[pred_var]]) || is.factor(data[[pred_var]])) {
+              # Count observations per level
+              level_counts <- table(data[[pred_var]], useNA = "no")
+
+              # Get levels ordered by count (descending)
+              levels_by_count <- names(sort(level_counts, decreasing = TRUE))
+
+              # Convert to factor with most common level first
+              data[[pred_var]] <- factor(data[[pred_var]], levels = levels_by_count)
+
+              if (verbose) {
+                cat("  Set base category for", pred_var, "to:", levels_by_count[1],
+                    "(n =", level_counts[levels_by_count[1]], ")\n")
+              }
+            }
+          }
+        }
+
+        if (verbose) {
+          cat("\n")
+        }
+
         # Fit the model
         if (verbose) {
           cat("  Fitting proportional odds model with", link, "link...\n")
@@ -1567,6 +1593,306 @@
           formula = formula,
           outcome_var = outcome_var
         ))
+      }
+
+    # FIT PARTIAL PROPORTIONAL ODDS MODEL (PPOM) WITH SPECIFIED LINK FUNCTION
+      fit_ppom <- function(
+        formula,
+        data,
+        link = "logit",
+        confidence_level = 0.95,
+        verbose = TRUE
+      ) {
+        # Load VGAM for vglm (partial proportional odds model)
+        if (!requireNamespace("VGAM", quietly = TRUE)) {
+          stop("Package 'VGAM' is required for partial proportional odds model. Please install it with: install.packages('VGAM')")
+        }
+
+        # Validate link function for PPOM
+        # VGAM::cumulative supports: logitlink, probitlink, clogloglink, cauchitlink
+        link_map <- c(
+          "logit" = "logitlink",
+          "probit" = "probitlink",
+          "cloglog" = "clogloglink",
+          "cauchit" = "cauchitlink"
+        )
+
+        if (!(link %in% names(link_map))) {
+          stop(paste("Invalid link function for PPOM. Must be one of:",
+                    paste(names(link_map), collapse = ", ")))
+        }
+
+        vgam_link <- link_map[link]
+
+        # Extract outcome variable name from formula
+        outcome_var <- as.character(formula)[2]
+
+        # Ensure outcome is an ordered factor
+        if (!is.ordered(data[[outcome_var]])) {
+          if (verbose) {
+            cat("  Converting outcome variable to ordered factor...\n")
+          }
+          if (is.numeric(data[[outcome_var]])) {
+            data[[outcome_var]] <- factor(data[[outcome_var]], ordered = TRUE)
+          } else {
+            existing_levels <- if (is.factor(data[[outcome_var]])) {
+              levels(data[[outcome_var]])
+            } else {
+              sort(unique(data[[outcome_var]]))
+            }
+            data[[outcome_var]] <- factor(data[[outcome_var]],
+                                          levels = existing_levels,
+                                          ordered = TRUE)
+          }
+        }
+
+        # Check that all predictor variables have at least 2 levels
+        predictor_vars <- all.vars(formula[[3]])
+        for (pred_var in predictor_vars) {
+          if (pred_var %in% names(data)) {
+            n_levels <- length(unique(data[[pred_var]]))
+            if (n_levels < 2) {
+              stop(paste("Predictor variable", pred_var, "has only", n_levels,
+                        "level(s). All predictors must have at least 2 levels."))
+            }
+          }
+        }
+
+        # Check cell counts
+        cell_check <- check_cell_counts(data, outcome_var, min_count = 10)
+        if (cell_check$has_issues && verbose) {
+          cat("  WARNING: Some outcome categories have fewer than 10 observations:\n")
+          print(cell_check$issues)
+          cat("\n")
+        }
+
+        # Set base category to largest group for all categorical predictors
+        for (pred_var in predictor_vars) {
+          if (pred_var %in% names(data)) {
+            if (is.character(data[[pred_var]]) || is.factor(data[[pred_var]])) {
+              level_counts <- table(data[[pred_var]], useNA = "no")
+              levels_by_count <- names(sort(level_counts, decreasing = TRUE))
+              data[[pred_var]] <- factor(data[[pred_var]], levels = levels_by_count)
+
+              if (verbose) {
+                cat("  Set base category for", pred_var, "to:", levels_by_count[1],
+                    "(n =", level_counts[levels_by_count[1]], ")\n")
+              }
+            }
+          }
+        }
+
+        if (verbose) {
+          cat("\n")
+        }
+
+        # Fit the PPOM model
+        if (verbose) {
+          cat("  Fitting partial proportional odds model (PPOM) with", link, "link...\n")
+        }
+
+        model <- tryCatch({
+          VGAM::vglm(formula,
+                     family = VGAM::cumulative(link = vgam_link, parallel = FALSE),
+                     data = data)
+        }, error = function(e) {
+          stop(paste("PPOM model fitting failed:", e$message))
+        })
+
+        # Extract coefficients - VGAM returns threshold-specific coefficients
+        model_summary <- summary(model)
+        coef_summary <- if (isS4(model_summary)) {
+          slot(model_summary, "coef3")
+        } else {
+          coef(model_summary)
+        }
+
+        # Get number of outcome levels and thresholds
+        n_levels <- nlevels(data[[outcome_var]])
+        n_thresholds <- n_levels - 1
+
+        # Calculate z-critical value for confidence intervals
+        alpha <- 1 - confidence_level
+        z_crit <- qnorm(1 - alpha/2)
+
+        # Extract threshold names (intercepts)
+        threshold_names <- paste0(levels(data[[outcome_var]])[1:(n_levels-1)], "|",
+                                  levels(data[[outcome_var]])[2:n_levels])
+
+        # Parse coefficient names to separate predictors and thresholds
+        # VGAM naming: "(Intercept):1", "(Intercept):2", "predictor:1", "predictor:2", etc.
+        coef_names <- rownames(coef_summary)
+
+        # Separate intercepts and predictor coefficients
+        intercept_rows <- grep("^\\(Intercept\\):", coef_names)
+        predictor_rows <- setdiff(1:nrow(coef_summary), intercept_rows)
+
+        # Extract thresholds
+        thresholds <- tibble(
+          threshold = threshold_names,
+          value = coef_summary[intercept_rows, "Estimate"],
+          std_error = coef_summary[intercept_rows, "Std. Error"]
+        )
+
+        # Process predictor coefficients - they vary by threshold in PPOM
+        if (length(predictor_rows) > 0) {
+          # Get unique predictor names (without threshold suffix)
+          predictor_coef_names <- coef_names[predictor_rows]
+          unique_predictors <- unique(gsub(":[0-9]+$", "", predictor_coef_names))
+
+          # Build threshold-specific coefficient dataframe
+          threshold_coefs_list <- list()
+
+          for (pred in unique_predictors) {
+            pred_rows <- grep(paste0("^", pred, ":"), coef_names)
+
+            for (i in seq_along(pred_rows)) {
+              row_idx <- pred_rows[i]
+              threshold_coefs_list[[length(threshold_coefs_list) + 1]] <- tibble(
+                variable = pred,
+                threshold = threshold_names[i],
+                threshold_num = i,
+                log_odds = coef_summary[row_idx, "Estimate"],
+                std_error = coef_summary[row_idx, "Std. Error"],
+                z_value = coef_summary[row_idx, "z value"],
+                p_value = coef_summary[row_idx, "Pr(>|z|)"],
+                ci_lower_log_odds = log_odds - z_crit * std_error,
+                ci_upper_log_odds = log_odds + z_crit * std_error,
+                odds_ratio = exp(log_odds),
+                ci_lower_or = exp(ci_lower_log_odds),
+                ci_upper_or = exp(ci_upper_log_odds)
+              )
+            }
+          }
+
+          threshold_specific_coefs <- bind_rows(threshold_coefs_list)
+
+          # Also create average coefficients across thresholds for summary table
+          avg_coefs <- threshold_specific_coefs %>%
+            group_by(variable) %>%
+            summarize(
+              log_odds = mean(log_odds),
+              std_error = mean(std_error),
+              z_value = mean(z_value),
+              p_value = mean(p_value),
+              ci_lower_log_odds = mean(ci_lower_log_odds),
+              ci_upper_log_odds = mean(ci_upper_log_odds),
+              odds_ratio = exp(log_odds),
+              ci_lower_or = exp(ci_lower_log_odds),
+              ci_upper_or = exp(ci_upper_log_odds),
+              .groups = "drop"
+            )
+        } else {
+          threshold_specific_coefs <- tibble(
+            variable = character(),
+            threshold = character(),
+            threshold_num = integer(),
+            log_odds = numeric(),
+            std_error = numeric(),
+            z_value = numeric(),
+            p_value = numeric(),
+            ci_lower_log_odds = numeric(),
+            ci_upper_log_odds = numeric(),
+            odds_ratio = numeric(),
+            ci_lower_or = numeric(),
+            ci_upper_or = numeric()
+          )
+          avg_coefs <- tibble(
+            variable = character(),
+            log_odds = numeric(),
+            std_error = numeric(),
+            z_value = numeric(),
+            p_value = numeric(),
+            ci_lower_log_odds = numeric(),
+            ci_upper_log_odds = numeric(),
+            odds_ratio = numeric(),
+            ci_lower_or = numeric(),
+            ci_upper_or = numeric()
+          )
+        }
+
+        # Calculate model fit statistics
+        model_stats <- list(
+          aic = AIC(model),
+          bic = BIC(model),
+          log_likelihood = logLik(model)[1],
+          df = attr(logLik(model), "df"),
+          n_obs = nobs(model),
+          n_predictors = length(unique_predictors),
+          n_thresholds = n_thresholds,
+          link_function = link,
+          confidence_level = confidence_level,
+          model_type = "PPOM"
+        )
+
+        if (verbose) {
+          cat("  PPOM model fitted successfully\n")
+          cat("  AIC:", round(model_stats$aic, 2), "\n")
+          cat("  BIC:", round(model_stats$bic, 2), "\n")
+          cat("  Log-likelihood:", round(model_stats$log_likelihood, 2), "\n")
+          cat("  Number of thresholds:", n_thresholds, "\n\n")
+        }
+
+        return(list(
+          model = model,
+          coefficients = avg_coefs,  # Average coefficients for summary table
+          threshold_specific_coefs = threshold_specific_coefs,  # Full threshold-specific coefficients
+          thresholds = thresholds,
+          model_stats = model_stats,
+          cell_counts = cell_check$all_counts,
+          formula = formula,
+          outcome_var = outcome_var,
+          model_type = "PPOM"
+        ))
+      }
+
+    # GET BASE CATEGORIES FOR FACTOR VARIABLES
+      get_base_categories <- function(pom_result) {
+        # Extract base categories for all factor variables in a POM or PPOM model
+        #
+        # Args:
+        #   pom_result: Output from fit_pom() or fit_ppom() containing model object
+        #
+        # Returns:
+        #   Named list where names are variable names and values are base categories
+
+        model <- pom_result$model
+
+        # Get xlevels from the model (contains factor levels)
+        if (is.null(model$xlevels) || length(model$xlevels) == 0) {
+          return(list())
+        }
+
+        # For each factor variable, the base category is the first level
+        # (R uses treatment contrasts by default, where first level is reference)
+        base_cats <- lapply(model$xlevels, function(levels) levels[1])
+
+        return(base_cats)
+      }
+
+    # FORMAT BASE CATEGORIES FOR DISPLAY
+      format_base_categories_note <- function(base_categories) {
+        # Create a formatted text note showing base categories
+        #
+        # Args:
+        #   base_categories: Named list from get_base_categories()
+        #
+        # Returns:
+        #   Character string with formatted note, or NULL if no categorical variables
+
+        if (length(base_categories) == 0) {
+          return(NULL)
+        }
+
+        # Format each variable's base category
+        formatted_items <- sapply(names(base_categories), function(var_name) {
+          paste0(var_name, " (base: ", base_categories[[var_name]], ")")
+        })
+
+        # Combine into a single note
+        note <- paste("Base categories:", paste(formatted_items, collapse = ", "))
+
+        return(note)
       }
 
     # BRANT TEST FOR PROPORTIONAL ODDS ASSUMPTION
@@ -2093,14 +2419,21 @@
         }
 
         # Order variables by odds ratio for better visualization
+        # IMPORTANT: Must actually sort rows, not just reorder factor levels
         coef_data <- coef_data %>%
-          mutate(variable = reorder(variable, odds_ratio))
+          arrange(odds_ratio) %>%
+          mutate(variable = factor(variable, levels = variable))
 
         # Determine plot limits (symmetric on log scale around 1)
+        # Use confidence level from model to calculate z-critical value
+        conf_level <- pom_result$model_stats$confidence_level
+        alpha <- 1 - conf_level
+        z_crit <- qnorm(1 - alpha/2)
+
         log_or <- log(coef_data$odds_ratio)
         log_se <- coef_data$std_error
-        log_lower <- log_or - 1.96 * log_se
-        log_upper <- log_or + 1.96 * log_se
+        log_lower <- log_or - z_crit * log_se
+        log_upper <- log_or + z_crit * log_se
         log_range <- max(abs(c(log_lower, log_upper)))
 
         # Set x-axis limits (symmetric on log scale)
@@ -2153,9 +2486,7 @@
         main_title <- if (!is.null(plot_title)) {
           plot_title
         } else {
-          paste("Odds Ratios with",
-                paste0(pom_result$model_stats$confidence_level * 100, "%"),
-                "Confidence Intervals")
+          "Coefficient Forest Plot"
         }
 
         # Create the forest plot with normal curves
@@ -2204,6 +2535,79 @@
           )
 
         return(forest_plot)
+      }
+
+    # PLOT PPOM THRESHOLD-SPECIFIC COEFFICIENTS
+      plot_ppom_threshold_coefficients <- function(ppom_result, plot_title = NULL) {
+        # Create plot showing how coefficients vary across thresholds in PPOM
+        #
+        # Args:
+        #   ppom_result: Output from fit_ppom() containing threshold_specific_coefs
+        #   plot_title: Optional title for the plot
+        #
+        # Returns:
+        #   A ggplot object showing coefficients by threshold with confidence intervals
+
+        # Load required packages
+        if (!requireNamespace("ggplot2", quietly = TRUE)) {
+          stop("Package 'ggplot2' is required for plotting.")
+        }
+        if (!requireNamespace("dplyr", quietly = TRUE)) {
+          stop("Package 'dplyr' is required for plotting.")
+        }
+        library(ggplot2)
+        library(dplyr)
+
+        # Extract threshold-specific coefficients
+        coef_data <- ppom_result$threshold_specific_coefs
+
+        if (nrow(coef_data) == 0) {
+          stop("No threshold-specific coefficients found in ppom_result")
+        }
+
+        # Create plot showing coefficients across thresholds
+        # Each variable gets its own facet
+        threshold_plot <- ggplot(coef_data, aes(x = threshold_num, y = odds_ratio, group = variable)) +
+          # Reference line at OR = 1
+          geom_hline(yintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
+
+          # Confidence interval ribbons
+          geom_ribbon(aes(ymin = ci_lower_or, ymax = ci_upper_or),
+                      alpha = 0.2, fill = "#0072B2") +
+
+          # Point estimates with line connecting them
+          geom_line(color = "#0072B2", linewidth = 1) +
+          geom_point(aes(color = ifelse(p_value < 0.05, "Significant", "Not significant")),
+                     size = 3) +
+
+          # Facet by variable
+          facet_wrap(~ variable, scales = "free_y", ncol = 2) +
+
+          # Styling
+          scale_color_manual(
+            values = c("Significant" = "#D55E00", "Not significant" = "#0072B2"),
+            name = "p < 0.05"
+          ) +
+          scale_x_continuous(
+            breaks = unique(coef_data$threshold_num),
+            labels = unique(coef_data$threshold)
+          ) +
+          labs(
+            title = if (!is.null(plot_title)) plot_title else "Threshold-Specific Coefficients (PPOM)",
+            x = "Threshold",
+            y = "Odds Ratio"
+          ) +
+          theme_minimal() +
+          theme(
+            plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+            axis.title = element_text(size = 10),
+            axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+            axis.text.y = element_text(size = 9),
+            strip.text = element_text(size = 10, face = "bold"),
+            legend.position = "bottom"
+          )
+
+        return(threshold_plot)
       }
 
 
@@ -2349,6 +2753,19 @@
 
         y_pos <- y_pos - 0.01
 
+        # Interaction terms (if specified)
+        if (!is.null(results$model_info$interaction_terms) &&
+            !is.na(results$model_info$interaction_terms) &&
+            nchar(trimws(results$model_info$interaction_terms)) > 0) {
+          y_pos <- y_pos - 0.03
+          grid.text("Interaction Terms:", x = 0.12, y = y_pos, just = "left",
+                    gp = gpar(fontsize = 10, fontface = "bold"))
+          y_pos <- y_pos - 0.025
+          grid.text(results$model_info$interaction_terms, x = 0.15, y = y_pos, just = "left",
+                    gp = gpar(fontsize = 9, col = "darkblue"))
+          y_pos <- y_pos - 0.01
+        }
+
         # Filter condition (if applied)
         if (!is.null(results$filter_info) && results$filter_info$filter_applied) {
           y_pos <- y_pos - 0.03
@@ -2445,50 +2862,7 @@
                   x = 0.5, y = 0.05,
                   gp = gpar(fontsize = 8, col = "gray50"))
 
-        # PAGE 2: COEFFICIENTS TABLE ----
-        grid.newpage()
-
-        # Title
-        grid.text("Regression Coefficients", x = 0.5, y = 0.95,
-                  gp = gpar(fontsize = 16, fontface = "bold"))
-        grid.text("Log-Odds, Odds Ratios, and Confidence Intervals",
-                  x = 0.5, y = 0.92,
-                  gp = gpar(fontsize = 11, col = "gray30"))
-        grid.lines(x = c(0.05, 0.95), y = c(0.90, 0.90), gp = gpar(lwd = 2))
-
-        # Format coefficients for display
-        coef_display <- results$pom_result$coefficients %>%
-          mutate(
-            log_odds = sprintf("%.3f", log_odds),
-            std_error = sprintf("%.3f", std_error),
-            p_value = ifelse(p_value < 0.001, "< 0.001", sprintf("%.3f", p_value)),
-            odds_ratio = sprintf("%.3f", odds_ratio),
-            ci_95 = paste0("[", sprintf("%.3f", ci_lower_or), ", ",
-                          sprintf("%.3f", ci_upper_or), "]")
-          ) %>%
-          select(variable, log_odds, std_error, p_value, odds_ratio, ci_95)
-
-        # Create table
-        coef_table <- tableGrob(coef_display,
-                                rows = NULL,
-                                theme = ttheme_minimal(
-                                  base_size = 9,
-                                  core = list(fg_params = list(hjust = 0, x = 0.05)),
-                                  colhead = list(fg_params = list(fontface = "bold"))
-                                ))
-
-        # Draw table
-        vp <- viewport(x = 0.5, y = 0.50, width = 0.90, height = 0.75)
-        pushViewport(vp)
-        grid.draw(coef_table)
-        popViewport()
-
-        # Footer
-        grid.text(paste("Model:", model_id),
-                  x = 0.5, y = 0.05,
-                  gp = gpar(fontsize = 8, col = "gray50"))
-
-        # PAGE 3: VIF DIAGNOSTICS (if available) ----
+        # PAGE 2: VIF DIAGNOSTICS (if available) ----
         if (!is.null(results$vif_results)) {
           grid.newpage()
 
@@ -2549,7 +2923,7 @@
                     gp = gpar(fontsize = 8, col = "gray50"))
         }
 
-        # PAGE 4: DIAGNOSTIC PLOTS ----
+        # PAGE 3: DIAGNOSTIC PLOTS ----
         if (!is.null(results$diagnostic_plot)) {
           grid.newpage()
 
@@ -2570,6 +2944,62 @@
                     gp = gpar(fontsize = 8, col = "gray50"))
         }
 
+        # PAGE 4: COEFFICIENTS TABLE ----
+        grid.newpage()
+
+        # Title
+        grid.text("Regression Coefficients", x = 0.5, y = 0.95,
+                  gp = gpar(fontsize = 16, fontface = "bold"))
+        grid.text("Log-Odds, Odds Ratios, and Confidence Intervals",
+                  x = 0.5, y = 0.92,
+                  gp = gpar(fontsize = 11, col = "gray30"))
+        grid.lines(x = c(0.05, 0.95), y = c(0.90, 0.90), gp = gpar(lwd = 2))
+
+        # Format coefficients for display
+        # Create dynamic CI column name based on actual confidence level
+        conf_level <- results$pom_result$model_stats$confidence_level
+        ci_col_name <- paste0("ci_", round(conf_level * 100))
+
+        coef_display <- results$pom_result$coefficients %>%
+          mutate(
+            log_odds = sprintf("%.3f", log_odds),
+            std_error = sprintf("%.3f", std_error),
+            p_value = ifelse(p_value < 0.001, "< 0.001", sprintf("%.3f", p_value)),
+            odds_ratio = sprintf("%.3f", odds_ratio),
+            !!ci_col_name := paste0("[", sprintf("%.3f", ci_lower_or), ", ",
+                          sprintf("%.3f", ci_upper_or), "]")
+          ) %>%
+          select(variable, log_odds, std_error, p_value, odds_ratio, !!ci_col_name)
+
+        # Create table
+        coef_table <- tableGrob(coef_display,
+                                rows = NULL,
+                                theme = ttheme_minimal(
+                                  base_size = 9,
+                                  core = list(fg_params = list(hjust = 0, x = 0.05)),
+                                  colhead = list(fg_params = list(fontface = "bold"))
+                                ))
+
+        # Draw table
+        vp <- viewport(x = 0.5, y = 0.50, width = 0.90, height = 0.75)
+        pushViewport(vp)
+        grid.draw(coef_table)
+        popViewport()
+
+        # Base categories note (if categorical variables present)
+        base_categories <- get_base_categories(results$pom_result)
+        base_note <- format_base_categories_note(base_categories)
+        if (!is.null(base_note)) {
+          grid.text(base_note,
+                    x = 0.5, y = 0.12,
+                    gp = gpar(fontsize = 9, col = "gray40", fontface = "italic"))
+        }
+
+        # Footer
+        grid.text(paste("Model:", model_id),
+                  x = 0.5, y = 0.05,
+                  gp = gpar(fontsize = 8, col = "gray50"))
+
         # PAGE 5: COEFFICIENT FOREST PLOT ----
         if (!is.null(results$pom_result)) {
           grid.newpage()
@@ -2577,10 +3007,7 @@
           # Title
           grid.text("Coefficient Forest Plot", x = 0.5, y = 0.97,
                     gp = gpar(fontsize = 16, fontface = "bold"))
-          grid.text("Odds Ratios with Confidence Intervals",
-                    x = 0.5, y = 0.94,
-                    gp = gpar(fontsize = 11, col = "gray30"))
-          grid.lines(x = c(0.05, 0.95), y = c(0.92, 0.92), gp = gpar(lwd = 2))
+          grid.lines(x = c(0.05, 0.95), y = c(0.95, 0.95), gp = gpar(lwd = 2))
 
           # Create forest plot
           forest_plot <- plot_pom_coefficients(
@@ -2703,6 +3130,18 @@
         grid.text(predictor_list,
                   x = 0.15, y = y_pos, just = "left", gp = gpar(fontsize = 9))
 
+        # Interaction terms (if specified)
+        if (!is.null(config_row$interaction_terms) &&
+            !is.na(config_row$interaction_terms) &&
+            nchar(trimws(config_row$interaction_terms)) > 0) {
+          y_pos <- y_pos - 0.03
+          grid.text("Interaction Terms:", x = 0.12, y = y_pos, just = "left",
+                    gp = gpar(fontsize = 10, fontface = "bold"))
+          y_pos <- y_pos - 0.025
+          grid.text(config_row$interaction_terms, x = 0.15, y = y_pos, just = "left",
+                    gp = gpar(fontsize = 9, col = "darkblue"))
+        }
+
         # Filter condition (check first result for filter info)
         first_result <- split_results$results[[split_results$categories[1]]]
         if (!is.null(first_result$filter_info) && first_result$filter_info$filter_applied) {
@@ -2786,43 +3225,7 @@
             next
           }
 
-          # PAGE 1: COEFFICIENTS
-          grid.newpage()
-
-          grid.text(cat_name,
-                    x = 0.5, y = 0.97,
-                    gp = gpar(fontsize = 14, fontface = "bold"))
-          grid.text("Regression Coefficients",
-                    x = 0.5, y = 0.93,
-                    gp = gpar(fontsize = 12))
-          grid.lines(x = c(0.05, 0.95), y = c(0.91, 0.91), gp = gpar(lwd = 2))
-
-          # Format coefficients table
-          coef_display <- result$pom_result$coefficients %>%
-            mutate(
-              log_odds = round(log_odds, 3),
-              std_error = round(std_error, 3),
-              p_value = ifelse(p_value < 0.001, "< 0.001",
-                              ifelse(p_value < 0.01, format(round(p_value, 3), nsmall = 3),
-                                    format(round(p_value, 2), nsmall = 2))),
-              odds_ratio = round(odds_ratio, 3),
-              ci_95 = paste0("[", round(ci_lower_or, 3), ", ", round(ci_upper_or, 3), "]")
-            ) %>%
-            select(variable, log_odds, std_error, p_value, odds_ratio, ci_95)
-
-          # Draw coefficients table
-          vp_coef <- viewport(x = 0.5, y = 0.45, width = 0.90, height = 0.80)
-          pushViewport(vp_coef)
-          grid.table(coef_display, rows = NULL,
-                     theme = ttheme_default(base_size = 8,
-                                            core = list(fg_params = list(hjust = 0, x = 0.05))))
-          popViewport()
-
-          grid.text(paste("Model:", model_id, "|", cat_name),
-                    x = 0.5, y = 0.02,
-                    gp = gpar(fontsize = 8, col = "gray50"))
-
-          # PAGE 2: VIF DIAGNOSTICS
+          # PAGE 1: VIF DIAGNOSTICS
           if (!is.null(result$vif_results)) {
             grid.newpage()
 
@@ -2873,7 +3276,7 @@
                       gp = gpar(fontsize = 8, col = "gray50"))
           }
 
-          # PAGE 3: DIAGNOSTIC PLOTS
+          # PAGE 2: DIAGNOSTIC PLOTS
           if (!is.null(result$diagnostic_plot)) {
             grid.newpage()
 
@@ -2895,6 +3298,125 @@
                       x = 0.5, y = 0.02,
                       gp = gpar(fontsize = 8, col = "gray50"))
           }
+
+          # PAGE 3: SAMPLE SIZES & REGRESSION COEFFICIENTS
+          grid.newpage()
+
+          grid.text(cat_name,
+                    x = 0.5, y = 0.97,
+                    gp = gpar(fontsize = 14, fontface = "bold"))
+          grid.text("Sample Sizes & Regression Coefficients",
+                    x = 0.5, y = 0.93,
+                    gp = gpar(fontsize = 12))
+          grid.lines(x = c(0.05, 0.95), y = c(0.91, 0.91), gp = gpar(lwd = 2))
+
+          # SECTION 1: CATEGORY SAMPLE SIZES
+          y_pos <- 0.87
+          grid.text("Category Sample Sizes",
+                    x = 0.1, y = y_pos, just = "left",
+                    gp = gpar(fontsize = 11, fontface = "bold"))
+
+          # Build category sizes table
+          category_sizes_list <- list()
+
+          # Get the actual data used in the regression
+          regression_data <- result$data_prep$data
+          predictor_vars <- result$data_prep$predictors
+
+          for (var_name in predictor_vars) {
+            if (var_name %in% names(regression_data)) {
+              var_data <- regression_data[[var_name]]
+
+              # Check if variable is categorical (character or factor)
+              if (is.character(var_data) || is.factor(var_data)) {
+                # Get counts for each level
+                level_counts <- table(var_data, useNA = "no")
+
+                # Add each level to the table
+                for (level_name in names(level_counts)) {
+                  category_sizes_list[[length(category_sizes_list) + 1]] <- data.frame(
+                    Variable = var_name,
+                    Category = level_name,
+                    N = as.integer(level_counts[level_name]),
+                    stringsAsFactors = FALSE
+                  )
+                }
+              }
+            }
+          }
+
+          # Draw category sizes table if we have categorical variables
+          if (length(category_sizes_list) > 0) {
+            category_sizes_df <- do.call(rbind, category_sizes_list)
+
+            # Calculate table height based on number of rows
+            num_cat_rows <- nrow(category_sizes_df)
+            cat_table_height <- min(0.18, 0.03 + num_cat_rows * 0.015)
+
+            vp_cat_sizes <- viewport(x = 0.5, y = y_pos - 0.02 - cat_table_height/2,
+                                     width = 0.60, height = cat_table_height)
+            pushViewport(vp_cat_sizes)
+            grid.table(category_sizes_df, rows = NULL,
+                       theme = ttheme_default(base_size = 8,
+                                              core = list(fg_params = list(hjust = 0, x = 0.05))))
+            popViewport()
+
+            y_pos <- y_pos - 0.04 - cat_table_height
+          } else {
+            grid.text("No categorical variables",
+                      x = 0.5, y = y_pos - 0.05,
+                      gp = gpar(fontsize = 9, col = "gray50", fontface = "italic"))
+            y_pos <- y_pos - 0.10
+          }
+
+          # SECTION 2: REGRESSION COEFFICIENTS
+          y_pos <- y_pos - 0.03
+          grid.text("Regression Coefficients",
+                    x = 0.1, y = y_pos, just = "left",
+                    gp = gpar(fontsize = 11, fontface = "bold"))
+
+          # Format coefficients table
+          # Create dynamic CI column name based on actual confidence level
+          conf_level <- result$pom_result$model_stats$confidence_level
+          ci_col_name <- paste0("ci_", round(conf_level * 100))
+
+          coef_display <- result$pom_result$coefficients %>%
+            mutate(
+              log_odds = round(log_odds, 3),
+              std_error = round(std_error, 3),
+              p_value = ifelse(p_value < 0.001, "< 0.001",
+                              ifelse(p_value < 0.01, format(round(p_value, 3), nsmall = 3),
+                                    format(round(p_value, 2), nsmall = 2))),
+              odds_ratio = round(odds_ratio, 3),
+              !!ci_col_name := paste0("[", round(ci_lower_or, 3), ", ", round(ci_upper_or, 3), "]")
+            ) %>%
+            select(variable, log_odds, std_error, p_value, odds_ratio, !!ci_col_name)
+
+          # Calculate remaining space for coefficients table
+          num_coef_rows <- nrow(coef_display)
+          coef_table_height <- min(y_pos - 0.15, 0.05 + num_coef_rows * 0.02)
+
+          # Draw coefficients table
+          vp_coef <- viewport(x = 0.5, y = y_pos - 0.02 - coef_table_height/2,
+                             width = 0.85, height = coef_table_height)
+          pushViewport(vp_coef)
+          grid.table(coef_display, rows = NULL,
+                     theme = ttheme_default(base_size = 8,
+                                            core = list(fg_params = list(hjust = 0, x = 0.05))))
+          popViewport()
+
+          # Base categories note (if categorical variables present)
+          base_categories <- get_base_categories(result$pom_result)
+          base_note <- format_base_categories_note(base_categories)
+          if (!is.null(base_note)) {
+            grid.text(base_note,
+                      x = 0.5, y = 0.08,
+                      gp = gpar(fontsize = 8, col = "gray40", fontface = "italic"))
+          }
+
+          grid.text(paste("Model:", model_id, "|", cat_name),
+                    x = 0.5, y = 0.02,
+                    gp = gpar(fontsize = 8, col = "gray50"))
 
           # PAGE 4: COEFFICIENT FOREST PLOT
           if (!is.null(result$pom_result)) {
@@ -2923,6 +3445,45 @@
             grid.text(paste("Model:", model_id, "|", cat_name),
                       x = 0.5, y = 0.02,
                       gp = gpar(fontsize = 8, col = "gray50"))
+
+            # PAGE 5: THRESHOLD-SPECIFIC COEFFICIENTS (PPOM only)
+            # Check if this is a PPOM model
+            if (!is.null(result$pom_result$model_type) &&
+                result$pom_result$model_type == "PPOM" &&
+                !is.null(result$pom_result$threshold_specific_coefs) &&
+                nrow(result$pom_result$threshold_specific_coefs) > 0) {
+
+              grid.newpage()
+
+              grid.text(cat_name,
+                        x = 0.5, y = 0.97,
+                        gp = gpar(fontsize = 14, fontface = "bold"))
+              grid.text("Threshold-Specific Coefficients (PPOM)",
+                        x = 0.5, y = 0.93,
+                        gp = gpar(fontsize = 12))
+              grid.lines(x = c(0.05, 0.95), y = c(0.91, 0.91), gp = gpar(lwd = 2))
+
+              # Add explanatory text
+              grid.text("In PPOM, coefficients can vary across thresholds, relaxing the proportional odds assumption.",
+                        x = 0.5, y = 0.87,
+                        gp = gpar(fontsize = 9, col = "gray30", fontface = "italic"))
+
+              # Create threshold-specific coefficient plot
+              threshold_plot <- plot_ppom_threshold_coefficients(
+                ppom_result = result$pom_result,
+                plot_title = NULL
+              )
+
+              # Draw threshold plot
+              vp_threshold <- viewport(x = 0.5, y = 0.42, width = 0.85, height = 0.70)
+              pushViewport(vp_threshold)
+              print(threshold_plot, newpage = FALSE)
+              popViewport()
+
+              grid.text(paste("Model:", model_id, "|", cat_name),
+                        x = 0.5, y = 0.02,
+                        gp = gpar(fontsize = 8, col = "gray50"))
+            }
           }
         }
 
@@ -2979,7 +3540,8 @@
           model_id = config_row$model_id,
           model_label = config_row$model_label,
           outcome_var = config_row$outcome_var,
-          data_source = config_row$data_source
+          data_source = config_row$data_source,
+          interaction_terms = config_row$interaction_terms
         ),
         warnings = list(),
         errors = list()
@@ -3056,7 +3618,17 @@
 
         if (verbose) {
           cat("  n_after_filter:", data_prep$n_final, "\n")
-          cat("  n_excluded:", n_before_filter - data_prep$n_final, "\n\n")
+          cat("  n_excluded:", n_before_filter - data_prep$n_final, "\n")
+
+          # Report sex distribution after filtering if sex is a predictor
+          if ("sex" %in% data_prep$predictors && "sex" %in% names(filtered_data)) {
+            sex_counts <- table(filtered_data$sex, useNA = "no")
+            cat("  Sex distribution after filtering:\n")
+            for (sex_level in names(sex_counts)) {
+              cat("    ", sex_level, ": n =", sex_counts[sex_level], "\n")
+            }
+          }
+          cat("\n")
         }
       } else {
         # Store that no filter was applied
@@ -3117,18 +3689,45 @@
       pom_results_by_link <- list()
 
       for (link in test_links) {
+        # Detect if this is a PPOM model (link contains "ppom")
+        is_ppom <- grepl("ppom", link, ignore.case = TRUE)
+
+        # Extract the actual link function (e.g., "ppom_logit" -> "logit")
+        if (is_ppom) {
+          base_link <- sub("^ppom[_-]?", "", link, ignore.case = TRUE)
+          if (nchar(base_link) == 0) {
+            base_link <- "logit"  # Default to logit if not specified
+          }
+        } else {
+          base_link <- link
+        }
+
         pom_result <- tryCatch({
-          fit_pom(
-            formula = formula,
-            data = data_prep$data,
-            link = link,
-            confidence_level = conf_level,
-            verbose = FALSE
-          )
+          if (is_ppom) {
+            if (verbose) {
+              cat("  Detected PPOM model specification:", link, "\n")
+            }
+            fit_ppom(
+              formula = formula,
+              data = data_prep$data,
+              link = base_link,
+              confidence_level = conf_level,
+              verbose = verbose
+            )
+          } else {
+            fit_pom(
+              formula = formula,
+              data = data_prep$data,
+              link = base_link,
+              confidence_level = conf_level,
+              verbose = verbose
+            )
+          }
         }, error = function(e) {
-          results$errors[[paste0("pom_", link)]] <<- e$message
+          model_type <- if (is_ppom) "ppom" else "pom"
+          results$errors[[paste0(model_type, "_", link)]] <<- e$message
           if (verbose) {
-            cat("  ERROR fitting POM with", link, "link:", e$message, "\n")
+            cat("  ERROR fitting", toupper(model_type), "with", base_link, "link:", e$message, "\n")
           }
           return(NULL)
         })
