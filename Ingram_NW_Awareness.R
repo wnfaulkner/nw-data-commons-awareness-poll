@@ -2064,49 +2064,90 @@
 
     # PLOT POM COEFFICIENTS (forest plot)
       plot_pom_coefficients <- function(pom_result, plot_title = NULL) {
-        # Create forest plot showing odds ratios with confidence intervals
+        # Create forest plot showing odds ratios as normal curve distributions
         #
         # Args:
         #   pom_result: Output from fit_pom() containing coefficients with ORs and CIs
         #   plot_title: Optional title for the plot
         #
         # Returns:
-        #   A ggplot object (forest plot)
+        #   A ggplot object (forest plot with normal curves)
 
         # Load required packages
         if (!requireNamespace("ggplot2", quietly = TRUE)) {
           stop("Package 'ggplot2' is required for plotting.")
         }
+        if (!requireNamespace("dplyr", quietly = TRUE)) {
+          stop("Package 'dplyr' is required for plotting.")
+        }
         library(ggplot2)
+        library(dplyr)
 
         # Extract coefficients with odds ratios
         coef_data <- pom_result$coefficients
 
         # Check if we have the required columns
-        required_cols <- c("variable", "odds_ratio", "ci_lower_or", "ci_upper_or", "p_value")
+        required_cols <- c("variable", "odds_ratio", "std_error", "p_value")
         if (!all(required_cols %in% names(coef_data))) {
-          stop("pom_result$coefficients must contain: variable, odds_ratio, ci_lower_or, ci_upper_or, p_value")
+          stop("pom_result$coefficients must contain: variable, odds_ratio, std_error, p_value")
         }
 
-        # Prepare data for plotting
-        plot_data <- coef_data %>%
-          mutate(
-            # Create significance indicator
-            significant = p_value < 0.05,
-            # Format labels with OR and CI
-            label_text = sprintf("%.2f [%.2f, %.2f]", odds_ratio, ci_lower_or, ci_upper_or),
-            # Order variables by odds ratio for better visualization
-            variable = reorder(variable, odds_ratio)
-          )
+        # Order variables by odds ratio for better visualization
+        coef_data <- coef_data %>%
+          mutate(variable = reorder(variable, odds_ratio))
 
         # Determine plot limits (symmetric on log scale around 1)
-        log_or <- log(plot_data$odds_ratio)
-        log_lower <- log(plot_data$ci_lower_or)
-        log_upper <- log(plot_data$ci_upper_or)
+        log_or <- log(coef_data$odds_ratio)
+        log_se <- coef_data$std_error
+        log_lower <- log_or - 1.96 * log_se
+        log_upper <- log_or + 1.96 * log_se
         log_range <- max(abs(c(log_lower, log_upper)))
 
         # Set x-axis limits (symmetric on log scale)
         x_limits <- exp(c(-log_range * 1.2, log_range * 1.2))
+
+        # Generate normal curve data for each coefficient
+        n_points <- 30  # Resolution per curve
+        curve_data <- lapply(1:nrow(coef_data), function(i) {
+          row <- coef_data[i, ]
+
+          # Generate x values (on log scale for odds ratios)
+          log_mean <- log(row$odds_ratio)
+          log_se <- row$std_error
+
+          # Create sequence of x values around the mean (±4 SD to capture full curve)
+          x_log_seq <- seq(log_mean - 4*log_se, log_mean + 4*log_se, length.out = n_points)
+          x_or_seq <- exp(x_log_seq)
+
+          # Calculate normal density
+          density_vals <- dnorm(x_log_seq, mean = log_mean, sd = log_se)
+
+          # Normalize density to a reasonable height for plotting
+          # Scale so the peak has height proportional to the y-position
+          max_density <- max(density_vals)
+          height_scale <- 0.35  # controls how tall the curves are
+          density_scaled <- (density_vals / max_density) * height_scale
+
+          # Apply p-value based opacity
+          # Linear mapping: p=0.01 → 100%, p=0.25 → 25%, p>0.25 → 25%
+          opacity <- if (row$p_value <= 0.01) {
+            1.0
+          } else if (row$p_value <= 0.25) {
+            1.0 - ((row$p_value - 0.01) / (0.25 - 0.01)) * 0.75
+          } else {
+            0.25
+          }
+
+          data.frame(
+            variable = row$variable,
+            x = x_or_seq,
+            y_base = i,
+            y_curve = i + density_scaled,
+            odds_ratio = row$odds_ratio,
+            p_value = row$p_value,
+            opacity = opacity
+          )
+        }) %>% bind_rows()
 
         # Create title
         main_title <- if (!is.null(plot_title)) {
@@ -2117,24 +2158,19 @@
                 "Confidence Intervals")
         }
 
-        # Determine x position for labels (use fixed position based on max CI)
-        max_x_label <- max(plot_data$ci_upper_or) * 1.1
-
-        # Create forest plot
-        forest_plot <- ggplot(plot_data, aes(x = odds_ratio, y = variable)) +
+        # Create the forest plot with normal curves
+        forest_plot <- ggplot() +
           # Reference line at OR = 1
           geom_vline(xintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
 
-          # Confidence interval lines (use geom_errorbar with orientation)
-          geom_errorbar(aes(xmin = ci_lower_or, xmax = ci_upper_or, color = significant),
-                       width = 0.3, linewidth = 0.8, orientation = "y") +
+          # Horizontal lines at each variable position (the grey lines curves will overlap)
+          geom_hline(yintercept = 1:nrow(coef_data), color = "gray70", linewidth = 0.5) +
 
-          # Point estimates
-          geom_point(aes(color = significant, shape = significant), size = 3) +
-
-          # Add OR and CI labels on the right
-          geom_text(aes(label = label_text), x = max_x_label,
-                   hjust = 0, size = 3) +
+          # Normal curves (using geom_ribbon to fill under curve)
+          geom_ribbon(data = curve_data,
+                      aes(x = x, ymin = y_base, ymax = y_curve,
+                          group = variable, alpha = opacity),
+                      fill = "#0072B2", color = "#0072B2", linewidth = 0.5) +
 
           # Styling
           scale_x_continuous(
@@ -2143,16 +2179,12 @@
             labels = c("0.25", "0.5", "1.0", "2.0", "4.0"),
             limits = x_limits
           ) +
-          scale_color_manual(
-            values = c("TRUE" = "#D55E00", "FALSE" = "#0072B2"),
-            labels = c("TRUE" = "p < 0.05", "FALSE" = "p ≥ 0.05"),
-            name = "Significance"
+          scale_y_continuous(
+            breaks = 1:nrow(coef_data),
+            labels = levels(coef_data$variable),
+            limits = c(0.5, nrow(coef_data) + 0.5)
           ) +
-          scale_shape_manual(
-            values = c("TRUE" = 16, "FALSE" = 1),
-            labels = c("TRUE" = "p < 0.05", "FALSE" = "p ≥ 0.05"),
-            name = "Significance"
-          ) +
+          scale_alpha_identity() +  # Use opacity values directly
           labs(
             title = main_title,
             x = "Odds Ratio (log scale)",
@@ -2164,10 +2196,7 @@
             axis.title.x = element_text(size = 10),
             axis.text.y = element_text(size = 10),
             axis.text.x = element_text(size = 9),
-            legend.position = "bottom",
-            legend.title = element_text(size = 9),
-            legend.text = element_text(size = 8),
-            panel.grid.major.y = element_line(color = "gray90"),
+            panel.grid.major = element_blank(),
             panel.grid.minor = element_blank()
           )
 
@@ -3482,20 +3511,11 @@
   # MULTI-MODEL PIPELINE FUNCTIONS ----
 
     # These functions loop through config table and run multiple models
-
-    # RUN ALL CONFIGURED REGRESSIONS
-      # TODO: Implement run_all_regressions(regression.configs.tb)
-      # Will:
-      #   1. Filter for implement = TRUE
-      #   2. Loop through each config row
-      #   3. Call run_pom_with_splits() for each model
-      #   4. Collect results
-      #   5. Generate summary tables
-
-  # EXAMPLE/TEST CODE ----
-
-    # This section contains one-off example code for testing and development
-    # Will be replaced with function calls as we build out the pipeline
+    #   1. Filter for implement = TRUE
+    #   2. Loop through each config row
+    #   3. Call run_pom_with_splits() for each model
+    #   4. Collect results
+    #   5. Generate summary tables
 
     run_implemented_models <- TRUE
 
