@@ -2160,6 +2160,9 @@
 
         # Create the forest plot with normal curves
         forest_plot <- ggplot() +
+          # Light grey vertical lines at x-axis breaks
+          geom_vline(xintercept = c(0.25, 0.5, 2, 4), linetype = "solid", color = "gray85", linewidth = 0.3) +
+
           # Reference line at OR = 1
           geom_vline(xintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
 
