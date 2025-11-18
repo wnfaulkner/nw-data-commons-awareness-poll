@@ -2349,6 +2349,20 @@
 
         y_pos <- y_pos - 0.01
 
+        # Filter condition (if applied)
+        if (!is.null(results$filter_info) && results$filter_info$filter_applied) {
+          y_pos <- y_pos - 0.03
+          grid.text("Filter Condition:", x = 0.12, y = y_pos, just = "left",
+                    gp = gpar(fontsize = 10, fontface = "bold"))
+          y_pos <- y_pos - 0.025
+          grid.text(results$filter_info$filter_condition, x = 0.15, y = y_pos, just = "left",
+                    gp = gpar(fontsize = 9, col = "darkblue"))
+          y_pos <- y_pos - 0.025
+          grid.text(paste("Excluded:", results$filter_info$n_excluded, "observations"),
+                    x = 0.15, y = y_pos, just = "left", gp = gpar(fontsize = 9, col = "gray40"))
+          y_pos <- y_pos - 0.01
+        }
+
         y_pos <- y_pos - 0.03
         status_color <- ifelse(results$status == "SUCCESS", "darkgreen", "darkred")
         grid.text(paste("Status:", results$status),
@@ -2689,6 +2703,18 @@
         grid.text(predictor_list,
                   x = 0.15, y = y_pos, just = "left", gp = gpar(fontsize = 9))
 
+        # Filter condition (check first result for filter info)
+        first_result <- split_results$results[[split_results$categories[1]]]
+        if (!is.null(first_result$filter_info) && first_result$filter_info$filter_applied) {
+          y_pos <- y_pos - 0.03
+          grid.text("Filter Condition:", x = 0.12, y = y_pos, just = "left",
+                    gp = gpar(fontsize = 10, fontface = "bold"))
+          y_pos <- y_pos - 0.025
+          grid.text(first_result$filter_info$filter_condition, x = 0.15, y = y_pos, just = "left",
+                    gp = gpar(fontsize = 9, col = "darkblue"))
+          y_pos <- y_pos - 0.01
+        }
+
         y_pos <- y_pos - 0.04
         grid.text(paste("Categories Analyzed:", length(split_results$categories)),
                   x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
@@ -2986,7 +3012,61 @@
       results$data_prep <- data_prep
 
       if (verbose) {
-        cat("  n_final:", data_prep$n_final, "\n\n")
+        cat("  n_before_filter:", data_prep$n_final, "\n")
+      }
+
+      # STEP 1.5: Apply filter_condition if specified
+      filter_applied <- FALSE
+      n_before_filter <- data_prep$n_final
+
+      if (!is.null(config_row$filter_condition) &&
+          !is.na(config_row$filter_condition) &&
+          nchar(trimws(config_row$filter_condition)) > 0) {
+
+        filter_condition <- trimws(config_row$filter_condition)
+
+        if (verbose) {
+          cat("  Applying filter:", filter_condition, "\n")
+        }
+
+        # Apply filter using dplyr::filter with rlang::parse_expr
+        filtered_data <- tryCatch({
+          data_prep$data %>%
+            filter(!!rlang::parse_expr(filter_condition))
+        }, error = function(e) {
+          warning(paste("Filter condition failed:", e$message))
+          if (verbose) {
+            cat("  WARNING: Filter failed, using unfiltered data\n")
+          }
+          return(data_prep$data)
+        })
+
+        data_prep$data <- filtered_data
+        data_prep$n_final <- nrow(filtered_data)
+        filter_applied <- TRUE
+
+        # Store filter info in results
+        results$filter_info <- list(
+          filter_applied = TRUE,
+          filter_condition = filter_condition,
+          n_before_filter = n_before_filter,
+          n_after_filter = data_prep$n_final,
+          n_excluded = n_before_filter - data_prep$n_final
+        )
+
+        if (verbose) {
+          cat("  n_after_filter:", data_prep$n_final, "\n")
+          cat("  n_excluded:", n_before_filter - data_prep$n_final, "\n\n")
+        }
+      } else {
+        # Store that no filter was applied
+        results$filter_info <- list(
+          filter_applied = FALSE
+        )
+
+        if (verbose) {
+          cat("  No filter applied\n\n")
+        }
       }
 
       # STEP 2: Build formula
