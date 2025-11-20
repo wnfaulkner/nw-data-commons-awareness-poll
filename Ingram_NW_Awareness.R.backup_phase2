@@ -38,366 +38,6 @@ library(ggplot2)
 section0.duration <- Sys.time() - section0.starttime
 section0.duration
 
-# 0.5-HELPER FUNCTIONS -------------------------------------------------------------------------------
-
-# DATA VALIDATION FUNCTIONS ----
-# These functions catch configuration errors early with clear messages
-
-validate_google_sheets_data <- function(data.tb, questions.tb,
-                                       response.options.tb = NULL,
-                                       regression.configs.tb = NULL,
-                                       verbose = TRUE) {
-  # Validate imported Google Sheets data for required structure
-  #
-  # Args:
-  #   data.tb: Main data tibble
-  #   questions.tb: Questions metadata tibble
-  #   response.options.tb: Response options lookup (optional)
-  #   regression.configs.tb: Regression configurations (optional)
-  #   verbose: Print validation progress
-  #
-  # Returns:
-  #   TRUE if validation passes (otherwise stops with error)
-
-  if (verbose) cat("\nValidating Google Sheets data...\n")
-
-  # Validate data.tb
-  if (nrow(data.tb) == 0) {
-    stop("ERROR: data.tb is empty. Check Google Sheets 'data' tab.")
-  }
-  if (verbose) cat("  ✓ data.tb: ", nrow(data.tb), " rows\n", sep = "")
-
-  # Validate questions.tb
-  required_question_cols <- c("q.id", "var.name", "var.category")
-  missing_cols <- setdiff(required_question_cols, names(questions.tb))
-  if (length(missing_cols) > 0) {
-    stop("ERROR: questions.tb missing required columns: ",
-         paste(missing_cols, collapse = ", "))
-  }
-  if (any(is.na(questions.tb$var.name))) {
-    stop("ERROR: questions.tb has NA values in var.name column")
-  }
-  if (verbose) cat("  ✓ questions.tb: ", nrow(questions.tb), " rows, all required columns present\n", sep = "")
-
-  # Validate response.options.tb if provided
-  if (!is.null(response.options.tb)) {
-    required_response_cols <- c("q.theme", "response.option")
-    missing_cols <- setdiff(required_response_cols, names(response.options.tb))
-    if (length(missing_cols) > 0) {
-      stop("ERROR: response.options.tb missing required columns: ",
-           paste(missing_cols, collapse = ", "))
-    }
-    if (verbose) cat("  ✓ response.options.tb: ", nrow(response.options.tb), " rows\n", sep = "")
-  }
-
-  # Validate regression.configs.tb if provided
-  if (!is.null(regression.configs.tb)) {
-    required_config_cols <- c("model_id", "model_label", "outcome_var",
-                             "predictors", "regression_method")
-    missing_cols <- setdiff(required_config_cols, names(regression.configs.tb))
-    if (length(missing_cols) > 0) {
-      stop("ERROR: regression.configs.tb missing required columns: ",
-           paste(missing_cols, collapse = ", "))
-    }
-
-    # Check for duplicate model_ids
-    if (any(duplicated(regression.configs.tb$model_id))) {
-      dup_ids <- regression.configs.tb$model_id[duplicated(regression.configs.tb$model_id)]
-      stop("ERROR: Duplicate model_id values in regression.configs.tb: ",
-           paste(unique(dup_ids), collapse = ", "))
-    }
-
-    if (verbose) cat("  ✓ regression.configs.tb: ", nrow(regression.configs.tb),
-                    " models defined\n", sep = "")
-  }
-
-  if (verbose) cat("Data validation complete!\n\n")
-  return(TRUE)
-}
-
-validate_model_config <- function(config_row, verbose = TRUE) {
-  # Validate a single model configuration before fitting
-  #
-  # Args:
-  #   config_row: Single row from regression.configs.tb
-  #   verbose: Print validation messages
-  #
-  # Returns:
-  #   TRUE if valid (otherwise stops with error)
-
-  model_id <- config_row$model_id
-
-  if (verbose) cat("  Validating config for", model_id, "...\n")
-
-  # Get the data source specified in config
-  data_source_name <- config_row$data_source
-  if (is.na(data_source_name) || data_source_name == "") {
-    stop("ERROR [", model_id, "]: data_source field is empty")
-  }
-
-  # Check if data source exists
-  if (!exists(data_source_name, envir = .GlobalEnv)) {
-    stop("ERROR [", model_id, "]: data_source '", data_source_name,
-         "' not found in environment")
-  }
-
-  # Get the actual data
-  source_data <- get(data_source_name, envir = .GlobalEnv)
-
-  if (verbose) cat("    Using data source:", data_source_name,
-                   "(", nrow(source_data), "rows )\n")
-
-  # Check outcome variable exists
-  outcome_var <- config_row$outcome_var
-  if (!outcome_var %in% names(source_data)) {
-    stop("ERROR [", model_id, "]: outcome_var '", outcome_var,
-         "' not found in ", data_source_name, ". Available columns: ",
-         paste(head(names(source_data), 10), collapse = ", "), "...")
-  }
-
-  # Check outcome is not all NA
-  if (all(is.na(source_data[[outcome_var]]))) {
-    stop("ERROR [", model_id, "]: outcome_var '", outcome_var,
-         "' contains only NA values")
-  }
-
-  # Parse and validate predictor variables
-  predictors <- config_row$predictors
-  if (is.na(predictors) || predictors == "") {
-    stop("ERROR [", model_id, "]: predictors field is empty")
-  }
-
-  # Split predictors (assuming comma or + separated)
-  pred_vars <- unlist(strsplit(predictors, "[,+]"))
-  pred_vars <- trimws(pred_vars)
-
-  # Check each predictor exists
-  missing_preds <- setdiff(pred_vars, names(source_data))
-  if (length(missing_preds) > 0) {
-    stop("ERROR [", model_id, "]: predictor variables not found in ",
-         data_source_name, ": ",
-         paste(missing_preds, collapse = ", "),
-         "\nAvailable columns: ",
-         paste(head(names(source_data), 10), collapse = ", "), "...")
-  }
-
-  # Check regression_method is not empty
-  if (is.na(config_row$regression_method) || config_row$regression_method == "") {
-    stop("ERROR [", model_id, "]: regression_method field is empty. ",
-         "Specify regression method (e.g., 'pom_logit', 'ppom_logit', 'multinomial')")
-  }
-
-  # Validate filter_conditions syntax if present
-  if (!is.null(config_row$filter_conditions) &&
-      !is.na(config_row$filter_conditions) &&
-      config_row$filter_conditions != "") {
-
-    filter_cond <- config_row$filter_conditions
-
-    # Basic syntax check - look for dangerous patterns
-    if (grepl("(rm\\(|unlink\\(|system\\(|file\\.remove)", filter_cond)) {
-      stop("ERROR [", model_id, "]: filter_conditions contains potentially dangerous code: ",
-           filter_cond)
-    }
-
-    # Try to parse the filter condition
-    tryCatch({
-      # Don't actually evaluate, just parse to check syntax
-      parse(text = paste("data.tb %>% filter(", filter_cond, ")"))
-    }, error = function(e) {
-      stop("ERROR [", model_id, "]: filter_conditions has invalid syntax: ",
-           filter_cond, "\nParse error: ", e$message)
-    })
-  }
-
-  if (verbose) cat("    ✓ Config valid\n")
-  return(TRUE)
-}
-
-# UNIFIED MODEL FITTING FRAMEWORK ----
-# This framework provides a consistent interface for all regression model types
-# and makes it easy to add new model types (OLS, binary logit, multinomial, GAM)
-
-get_model_type <- function(model_spec) {
-  # Parse model specification to determine model type
-  #
-  # Args:
-  #   model_spec: String like "logit", "ppom_logit", "ols", "multinomial", etc.
-  #
-  # Returns:
-  #   List with model_type and link_function
-
-  model_spec <- tolower(trimws(model_spec))
-
-  # Model type patterns (order matters - check specific patterns first)
-  if (grepl("^ppom[_-]?", model_spec)) {
-    link <- sub("^ppom[_-]?", "", model_spec)
-    if (nchar(link) == 0) link <- "logit"
-    return(list(
-      model_type = "ppom",
-      link_function = link,
-      family = "ordinal"
-    ))
-  } else if (grepl("^pom[_-]?", model_spec)) {
-    link <- sub("^pom[_-]?", "", model_spec)
-    if (nchar(link) == 0) link <- "logit"
-    return(list(
-      model_type = "pom",
-      link_function = link,
-      family = "ordinal"
-    ))
-  } else if (grepl("^gam[_-]?ordinal", model_spec)) {
-    return(list(
-      model_type = "gam_ordinal",
-      link_function = "identity",
-      family = "ordinal"
-    ))
-  } else if (grepl("^multinomial", model_spec)) {
-    link <- sub("^multinomial[_-]?", "", model_spec)
-    if (nchar(link) == 0) link <- "logit"
-    return(list(
-      model_type = "multinomial",
-      link_function = link,
-      family = "multinomial"
-    ))
-  } else if (grepl("^binary[_-]", model_spec)) {
-    link <- sub("^binary[_-]?", "", model_spec)
-    if (nchar(link) == 0) link <- "logit"
-    return(list(
-      model_type = "binary",
-      link_function = link,
-      family = "binomial"
-    ))
-  } else if (grepl("^(ols|linear)", model_spec)) {
-    return(list(
-      model_type = "ols",
-      link_function = "identity",
-      family = "gaussian"
-    ))
-  } else if (model_spec %in% c("logit", "probit", "cloglog", "loglog", "cauchit")) {
-    # Standard ordinal regression (POM)
-    return(list(
-      model_type = "pom",
-      link_function = model_spec,
-      family = "ordinal"
-    ))
-  } else {
-    # Default: assume POM with specified link
-    return(list(
-      model_type = "pom",
-      link_function = model_spec,
-      family = "ordinal"
-    ))
-  }
-}
-
-fit_model <- function(model_spec, formula, data, confidence_level = 0.95,
-                     verbose = TRUE) {
-  # Unified model fitting function that routes to appropriate model type
-  #
-  # Args:
-  #   model_spec: String specifying model type (e.g., "logit", "ppom_logit", "ols")
-  #   formula: Model formula
-  #   data: Data frame
-  #   confidence_level: Confidence level for CIs
-  #   verbose: Print progress messages
-  #
-  # Returns:
-  #   Model results with standard structure
-
-  # Parse model specification
-  model_info <- get_model_type(model_spec)
-
-  if (verbose) {
-    cat("  Model type:", toupper(model_info$model_type), "\n")
-    if (model_info$link_function != "identity") {
-      cat("  Link function:", model_info$link_function, "\n")
-    }
-  }
-
-  # Route to appropriate fitting function
-  result <- switch(model_info$model_type,
-    "pom" = fit_pom(
-      formula = formula,
-      data = data,
-      link = model_info$link_function,
-      confidence_level = confidence_level,
-      verbose = verbose
-    ),
-    "ppom" = fit_ppom(
-      formula = formula,
-      data = data,
-      link = model_info$link_function,
-      confidence_level = confidence_level,
-      verbose = verbose
-    ),
-    "ols" = fit_ols(
-      formula = formula,
-      data = data,
-      confidence_level = confidence_level,
-      verbose = verbose
-    ),
-    "binary" = fit_binary(
-      formula = formula,
-      data = data,
-      link = model_info$link_function,
-      confidence_level = confidence_level,
-      verbose = verbose
-    ),
-    "multinomial" = fit_multinomial(
-      formula = formula,
-      data = data,
-      link = model_info$link_function,
-      confidence_level = confidence_level,
-      verbose = verbose
-    ),
-    "gam_ordinal" = fit_gam_ordinal(
-      formula = formula,
-      data = data,
-      confidence_level = confidence_level,
-      verbose = verbose
-    ),
-    stop("Unknown model type: ", model_info$model_type)
-  )
-
-  # Add model type info to result
-  if (!is.null(result)) {
-    result$model_info <- model_info
-  }
-
-  return(result)
-}
-
-# Stub functions for model types not yet implemented
-# These will be implemented in future tasks
-
-fit_ols <- function(formula, data, confidence_level = 0.95, verbose = TRUE) {
-  # Ordinary Least Squares regression
-  # TODO: Implement OLS regression
-  stop("OLS regression not yet implemented. Use regression_method='pom_logit' for ordinal outcomes.")
-}
-
-fit_binary <- function(formula, data, link = "logit", confidence_level = 0.95,
-                      verbose = TRUE) {
-  # Binary logistic/probit regression
-  # TODO: Implement binary logit/probit
-  stop("Binary logistic/probit regression not yet implemented. Use regression_method='pom_logit' for ordinal outcomes.")
-}
-
-fit_multinomial <- function(formula, data, link = "logit", confidence_level = 0.95,
-                            verbose = TRUE) {
-  # Multinomial logistic regression
-  # TODO: Implement in future task (see todo list item 6)
-  stop("Multinomial logistic regression not yet implemented. Coming soon!")
-}
-
-fit_gam_ordinal <- function(formula, data, confidence_level = 0.95,
-                            verbose = TRUE) {
-  # GAM-based ordinal regression
-  # TODO: Implement in future task (see todo list item 7)
-  stop("GAM-based ordinal regression not yet implemented. Coming soon!")
-}
-
 # 1-IMPORT DATA & CONFIGS -------------------------------------------------------------------------------
 
 gs4_auth(email = "william@fluxrme.com")
@@ -421,14 +61,6 @@ names(data.and.configs.ls) <- sheet.names.v
 # Assign each table to its own tibble object
 ListToTibbleObjects(data.and.configs.ls) # Converts list elements to separate tibble objects names with their respective sheet names with ".tb" appended
 
-# Validate imported data structure
-validate_google_sheets_data(
-  data.tb = data.tb,
-  questions.tb = questions.tb,
-  response.options.tb = response.options.tb,
-  regression.configs.tb = regression.configs.tb,
-  verbose = TRUE
-)
 
 # 2-CLEANING & RESHAPING -------------------------------------------------------------------------------
 
@@ -1947,9 +1579,6 @@ fit_ppom <- function(
     stop("Package 'VGAM' is required for partial proportional odds model. Please install it with: install.packages('VGAM')")
   }
 
-  # Must explicitly load VGAM to ensure summary.vglm method is available
-  library(VGAM)
-
   # Validate link function for PPOM
   # VGAM::cumulative supports: logitlink, probitlink, clogloglink, cauchitlink
   link_map <- c(
@@ -2197,26 +1826,13 @@ get_base_categories <- function(pom_result) {
   model <- pom_result$model
 
   # Get xlevels from the model (contains factor levels)
-  # Handle both S3 (polr) and S4 (vglm) model objects
-  xlevels <- if (isS4(model)) {
-    # VGAM::vglm models are S4 objects
-    if ("xlevels" %in% methods::slotNames(model)) {
-      slot(model, "xlevels")
-    } else {
-      NULL
-    }
-  } else {
-    # MASS::polr models are S3 objects
-    model$xlevels
-  }
-
-  if (is.null(xlevels) || length(xlevels) == 0) {
+  if (is.null(model$xlevels) || length(model$xlevels) == 0) {
     return(list())
   }
 
   # For each factor variable, the base category is the first level
   # (R uses treatment contrasts by default, where first level is reference)
-  base_cats <- lapply(xlevels, function(levels) levels[1])
+  base_cats <- lapply(model$xlevels, function(levels) levels[1])
 
   return(base_cats)
 }
@@ -2916,12 +2532,6 @@ plot_ppom_threshold_coefficients <- function(ppom_result, plot_title = NULL) {
     stop("No threshold-specific coefficients found in ppom_result")
   }
 
-  # Create threshold mapping for x-axis labels
-  threshold_mapping <- coef_data %>%
-    select(threshold_num, threshold) %>%
-    distinct() %>%
-    arrange(threshold_num)
-
   # Create plot showing coefficients across thresholds
   # Each variable gets its own facet
   threshold_plot <- ggplot(coef_data, aes(x = threshold_num, y = odds_ratio, group = variable)) +
@@ -2946,8 +2556,8 @@ plot_ppom_threshold_coefficients <- function(ppom_result, plot_title = NULL) {
       name = "p < 0.05"
     ) +
     scale_x_continuous(
-      breaks = threshold_mapping$threshold_num,
-      labels = threshold_mapping$threshold
+      breaks = unique(coef_data$threshold_num),
+      labels = unique(coef_data$threshold)
     ) +
     labs(
       title = if (!is.null(plot_title)) plot_title else "Threshold-Specific Coefficients (PPOM)",
@@ -2983,91 +2593,6 @@ create_timestamped_output_dir <- function(base_dir = "outputs") {
   }
 
   return(output_dir)
-}
-
-# PDF GENERATION HELPER FUNCTIONS ----
-# These functions reduce repetition in PDF report generation
-
-pdf_new_page_with_title <- function(title, subtitle = NULL, add_line = TRUE) {
-  # Start a new PDF page with title and optional subtitle
-  grid.newpage()
-
-  grid.text(title, x = 0.5, y = 0.95,
-            gp = gpar(fontsize = 14, fontface = "bold"))
-
-  if (!is.null(subtitle)) {
-    grid.text(subtitle, x = 0.5, y = 0.91,
-              gp = gpar(fontsize = 12, col = "gray30"))
-  }
-
-  if (add_line) {
-    line_y <- if (!is.null(subtitle)) 0.88 else 0.91
-    grid.lines(x = c(0.1, 0.9), y = c(line_y, line_y),
-               gp = gpar(lwd = 2))
-  }
-
-  # Return starting y position for content
-  return(if (!is.null(subtitle)) 0.83 else 0.86)
-}
-
-pdf_add_section_header <- function(text, y_pos, x = 0.1) {
-  # Add a section header with underline
-  grid.text(text, x = x, y = y_pos,
-            just = "left", gp = gpar(fontsize = 12, fontface = "bold"))
-
-  y_pos <- y_pos - 0.03
-  grid.lines(x = c(0.1, 0.9), y = c(y_pos, y_pos),
-             gp = gpar(lwd = 1, col = "gray60"))
-
-  # Return next content position
-  return(y_pos - 0.04)
-}
-
-pdf_add_key_value <- function(key, value, y_pos, x = 0.12,
-                              bold_key = FALSE, fontsize = 10) {
-  # Add a key-value pair
-  text <- paste0(key, ": ", value)
-  font_face <- if (bold_key) "bold" else "plain"
-
-  grid.text(text, x = x, y = y_pos, just = "left",
-            gp = gpar(fontsize = fontsize, fontface = font_face))
-
-  # Return next position
-  return(y_pos - 0.03)
-}
-
-pdf_add_table <- function(data, y_pos, theme = ttheme_minimal(base_size = 9),
-                         height = 0.15, width = 0.8) {
-  # Add a table to the current page
-  table_grob <- tableGrob(data, rows = NULL, theme = theme)
-
-  vp <- viewport(x = 0.5, y = y_pos - height / 2,
-                width = width, height = height)
-  pushViewport(vp)
-  grid.draw(table_grob)
-  popViewport()
-
-  # Return next position
-  return(y_pos - height - 0.04)
-}
-
-pdf_add_plot <- function(plot_obj, y_pos, height = 0.4, width = 0.8) {
-  # Add a plot to the current page
-  vp <- viewport(x = 0.5, y = y_pos - height / 2,
-                width = width, height = height)
-  pushViewport(vp)
-  print(plot_obj)
-  popViewport()
-
-  # Return next position
-  return(y_pos - height - 0.04)
-}
-
-pdf_add_footer <- function(y_pos = 0.05) {
-  # Add standard footer with timestamp
-  grid.text(paste("Report generated:", format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
-            x = 0.5, y = y_pos,
-            gp = gpar(fontsize = 8, col = "gray50"))
 }
 
 # EXPORT PDF REPORT
@@ -4104,19 +3629,19 @@ run_single_pom_analysis <- function(
 
   if (verbose) cat("  Formula:", deparse(formula), "\n\n")
 
-  # STEP 3: Fit Model
-  if (verbose) cat("Step 3: Fitting model...\n")
+  # STEP 3: Fit POM
+  if (verbose) cat("Step 3: Fitting POM...\n")
 
-  # Parse regression_method with robust type checking
-  regression_methods <- if (!is.null(config_row$regression_method) &&
-    !is.na(config_row$regression_method) &&
-    is.character(config_row$regression_method) &&
-    nchar(trimws(config_row$regression_method)) > 0) {
-    # Split comma-separated methods and trim whitespace
-    trimws(strsplit(config_row$regression_method, ",")[[1]])
+  # Parse test_link_functions with robust type checking
+  test_links <- if (!is.null(config_row$test_link_functions) &&
+    !is.na(config_row$test_link_functions) &&
+    is.character(config_row$test_link_functions) &&
+    nchar(trimws(config_row$test_link_functions)) > 0) {
+    # Split comma-separated link functions and trim whitespace
+    trimws(strsplit(config_row$test_link_functions, ",")[[1]])
   } else {
-    # Default to pom_logit if not specified
-    c("pom_logit")
+    # Default to logit if not specified
+    c("logit")
   }
 
   # Parse confidence level with type checking
@@ -4130,28 +3655,52 @@ run_single_pom_analysis <- function(
 
   pom_results_by_link <- list()
 
-  for (model_spec in regression_methods) {
-    # Use unified model fitting framework
+  for (link in test_links) {
+    # Detect if this is a PPOM model (link contains "ppom")
+    is_ppom <- grepl("ppom", link, ignore.case = TRUE)
+
+    # Extract the actual link function (e.g., "ppom_logit" -> "logit")
+    if (is_ppom) {
+      base_link <- sub("^ppom[_-]?", "", link, ignore.case = TRUE)
+      if (nchar(base_link) == 0) {
+        base_link <- "logit"  # Default to logit if not specified
+      }
+    } else {
+      base_link <- link
+    }
+
     pom_result <- tryCatch({
-      fit_model(
-        model_spec = model_spec,
-        formula = formula,
-        data = data_prep$data,
-        confidence_level = conf_level,
-        verbose = verbose
-      )
+      if (is_ppom) {
+        if (verbose) {
+          cat("  Detected PPOM model specification:", link, "\n")
+        }
+        fit_ppom(
+          formula = formula,
+          data = data_prep$data,
+          link = base_link,
+          confidence_level = conf_level,
+          verbose = verbose
+        )
+      } else {
+        fit_pom(
+          formula = formula,
+          data = data_prep$data,
+          link = base_link,
+          confidence_level = conf_level,
+          verbose = verbose
+        )
+      }
     }, error = function(e) {
-      # Parse model type for error reporting
-      model_info <- get_model_type(model_spec)
-      results$errors[[paste0(model_info$model_type, "_", model_spec)]] <<- e$message
+      model_type <- if (is_ppom) "ppom" else "pom"
+      results$errors[[paste0(model_type, "_", link)]] <<- e$message
       if (verbose) {
-        cat("  ERROR fitting", toupper(model_info$model_type), ":", e$message, "\n")
+        cat("  ERROR fitting", toupper(model_type), "with", base_link, "link:", e$message, "\n")
       }
       return(NULL)
     })
 
     if (!is.null(pom_result)) {
-      pom_results_by_link[[model_spec]] <- pom_result
+      pom_results_by_link[[link]] <- pom_result
     }
   }
 
@@ -4654,32 +4203,6 @@ if (run_implemented_models) {
       cat("\n", strrep("=", 80), "\n", sep = "")
       cat("RUNNING MODEL:", model_id, "\n")
       cat(strrep("=", 80), "\n\n", sep = "")
-
-      # Validate model configuration before running
-      validation_failed <- FALSE
-      validation_error <- NULL
-      tryCatch({
-        validate_model_config(current_model, verbose = TRUE)
-      }, error = function(e) {
-        validation_error <<- e$message
-        validation_failed <<- TRUE
-      })
-
-      if (validation_failed) {
-        cat("VALIDATION FAILED:", validation_error, "\n\n")
-        cat("Skipping this model due to configuration errors.\n\n")
-        # Store error result and skip to next model
-        all_results[[model_id]] <- list(
-          is_split = FALSE,
-          categories = NULL,
-          results = list(list(
-            status = "ERROR",
-            model_info = list(model_id = model_id),
-            errors = list(validation = validation_error)
-          ))
-        )
-        next
-      }
 
       cat("Config details:\n")
       cat("  Model ID:", current_model$model_id, "\n")
