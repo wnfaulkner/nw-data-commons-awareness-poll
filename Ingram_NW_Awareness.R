@@ -115,6 +115,39 @@ validate_google_sheets_data <- function(data.tb, questions.tb,
   return(TRUE)
 }
 
+# Helper function: Map generic column names to table-specific names
+map_column_names <- function(column_names, data_source_name) {
+  # Mapping for reshaped tables with renamed value columns
+  column_mapping <- list(
+    "awareness.tb" = list(
+      "value.num" = "awareness.num",
+      "value.text" = "awareness.text"
+    ),
+    "casualty.causes.tb" = list(
+      "value.num" = "casualty.num",
+      "value.text" = "casualty.text"
+    ),
+    "support.reaction.tb" = list(
+      "value.num" = "support.num",
+      "value.text" = "support.text"
+    ),
+    "decision.factors.tb" = list(
+      "value.num" = "decision.num",
+      "value.text" = "decision.text"
+    )
+  )
+
+  # Apply mapping if data source has mappings defined
+  if (data_source_name %in% names(column_mapping)) {
+    mappings <- column_mapping[[data_source_name]]
+    column_names <- sapply(column_names, function(col) {
+      if (col %in% names(mappings)) mappings[[col]] else col
+    }, USE.NAMES = FALSE)
+  }
+
+  return(column_names)
+}
+
 validate_model_config <- function(config_row, verbose = TRUE) {
   # Validate a single model configuration before fitting
   #
@@ -149,6 +182,7 @@ validate_model_config <- function(config_row, verbose = TRUE) {
 
   # Check outcome variable exists
   outcome_var <- config_row$outcome_var
+  outcome_var <- map_column_names(outcome_var, data_source_name)
   if (!outcome_var %in% names(source_data)) {
     stop("ERROR [", model_id, "]: outcome_var '", outcome_var,
          "' not found in ", data_source_name, ". Available columns: ",
@@ -170,6 +204,7 @@ validate_model_config <- function(config_row, verbose = TRUE) {
   # Split predictors (assuming comma or + separated)
   pred_vars <- unlist(strsplit(predictors, "[,+]"))
   pred_vars <- trimws(pred_vars)
+  pred_vars <- map_column_names(pred_vars, data_source_name)
 
   # Check each predictor exists
   missing_preds <- setdiff(pred_vars, names(source_data))
@@ -331,32 +366,10 @@ fit_model <- function(model_spec, formula, data, confidence_level = 0.95,
       confidence_level = confidence_level,
       verbose = verbose
     ),
-    "ols" = fit_ols(
-      formula = formula,
-      data = data,
-      confidence_level = confidence_level,
-      verbose = verbose
-    ),
-    "binary" = fit_binary(
-      formula = formula,
-      data = data,
-      link = model_info$link_function,
-      confidence_level = confidence_level,
-      verbose = verbose
-    ),
-    "multinomial" = fit_multinomial(
-      formula = formula,
-      data = data,
-      link = model_info$link_function,
-      confidence_level = confidence_level,
-      verbose = verbose
-    ),
-    "gam_ordinal" = fit_gam_ordinal(
-      formula = formula,
-      data = data,
-      confidence_level = confidence_level,
-      verbose = verbose
-    ),
+    "ols" = not_implemented_model("ols"),
+    "binary" = not_implemented_model("binary"),
+    "multinomial" = not_implemented_model("multinomial"),
+    "gam_ordinal" = not_implemented_model("gam_ordinal"),
     stop("Unknown model type: ", model_info$model_type)
   )
 
@@ -368,34 +381,15 @@ fit_model <- function(model_spec, formula, data, confidence_level = 0.95,
   return(result)
 }
 
-# Stub functions for model types not yet implemented
-# These will be implemented in future tasks
-
-fit_ols <- function(formula, data, confidence_level = 0.95, verbose = TRUE) {
-  # Ordinary Least Squares regression
-  # TODO: Implement OLS regression
-  stop("OLS regression not yet implemented. Use regression_method='pom_logit' for ordinal outcomes.")
-}
-
-fit_binary <- function(formula, data, link = "logit", confidence_level = 0.95,
-                      verbose = TRUE) {
-  # Binary logistic/probit regression
-  # TODO: Implement binary logit/probit
-  stop("Binary logistic/probit regression not yet implemented. Use regression_method='pom_logit' for ordinal outcomes.")
-}
-
-fit_multinomial <- function(formula, data, link = "logit", confidence_level = 0.95,
-                            verbose = TRUE) {
-  # Multinomial logistic regression
-  # TODO: Implement in future task (see todo list item 6)
-  stop("Multinomial logistic regression not yet implemented. Coming soon!")
-}
-
-fit_gam_ordinal <- function(formula, data, confidence_level = 0.95,
-                            verbose = TRUE) {
-  # GAM-based ordinal regression
-  # TODO: Implement in future task (see todo list item 7)
-  stop("GAM-based ordinal regression not yet implemented. Coming soon!")
+# Stub function for model types not yet implemented
+not_implemented_model <- function(model_type) {
+  messages <- list(
+    "ols" = "OLS regression not yet implemented. Use 'pom_logit' for ordinal outcomes.",
+    "binary" = "Binary logistic/probit not yet implemented. Use 'pom_logit' for ordinal outcomes.",
+    "multinomial" = "Multinomial logistic regression not yet implemented. Coming soon!",
+    "gam_ordinal" = "GAM-based ordinal regression not yet implemented. Coming soon!"
+  )
+  stop(messages[[model_type]])
 }
 
 # 1-IMPORT DATA & CONFIGS -------------------------------------------------------------------------------
@@ -536,7 +530,105 @@ data.tb %<>%
   relocate(political.affiliation, .after = sex)
 
 # ADD USEFUL CALCULATED VARIABLES
-# TODO: Implement awareness & support mean variables (task #5 pending)
+
+# Helper function to extract first numeric character from ordinal responses
+extract_numeric_from_ordinal <- function(x) {
+  if (is.na(x)) return(NA_real_)
+  first_char <- substr(as.character(x), 1, 1)
+  if (grepl("^[0-9]$", first_char)) {
+    return(as.numeric(first_char))
+  } else {
+    return(NA_real_)
+  }
+}
+
+data.tb <- data.tb %>%
+  mutate(
+    # AWARENESS VARIABLES - Numeric conversions
+    nw.awareness.1980s_numeric = sapply(nw.awareness.1980s, extract_numeric_from_ordinal),
+    nw.awareness.recent.media_numeric = sapply(nw.awareness.recent.media, extract_numeric_from_ordinal),
+    nw.awareness.recent.academic_numeric = sapply(nw.awareness.recent.academic, extract_numeric_from_ordinal),
+
+    # AWARENESS VARIABLES - Mean (calculated from available values)
+    nw.awareness_mean = rowMeans(
+      cbind(nw.awareness.1980s_numeric, nw.awareness.recent.media_numeric, nw.awareness.recent.academic_numeric),
+      na.rm = TRUE
+    ),
+
+    # AWARENESS VARIABLES - Any awareness binary
+    nw.awareness_any = case_when(
+      is.na(nw.awareness.1980s) & is.na(nw.awareness.recent.media) & is.na(nw.awareness.recent.academic) ~ NA_real_,
+      nw.awareness.1980s_numeric == 1 & nw.awareness.recent.media_numeric == 1 & nw.awareness.recent.academic_numeric == 1 ~ 0,
+      TRUE ~ 1
+    ),
+
+    # CASUALTY CAUSES - Log-midpoint numeric conversions (geometric mean of range)
+    casualties.blast_numeric_log = case_when(
+      casualties.blast == "(a) < 1M" ~ log10(5e5),
+      casualties.blast == "(b) 1-10M" ~ log10(sqrt(1e6 * 1e7)),
+      casualties.blast == "(c) 10-100M" ~ log10(sqrt(1e7 * 1e8)),
+      casualties.blast == "(d) 100M-1B" ~ log10(sqrt(1e8 * 1e9)),
+      casualties.blast == "(e) 1-8B" ~ log10(sqrt(1e9 * 8e9)),
+      TRUE ~ NA_real_
+    ),
+    casualties.radiation_numeric_log = case_when(
+      casualties.radiation == "(a) < 1M" ~ log10(5e5),
+      casualties.radiation == "(b) 1-10M" ~ log10(sqrt(1e6 * 1e7)),
+      casualties.radiation == "(c) 10-100M" ~ log10(sqrt(1e7 * 1e8)),
+      casualties.radiation == "(d) 100M-1B" ~ log10(sqrt(1e8 * 1e9)),
+      casualties.radiation == "(e) 1-8B" ~ log10(sqrt(1e9 * 8e9)),
+      TRUE ~ NA_real_
+    ),
+    casualties.starvation_numeric_log = case_when(
+      casualties.starvation == "(a) < 1M" ~ log10(5e5),
+      casualties.starvation == "(b) 1-10M" ~ log10(sqrt(1e6 * 1e7)),
+      casualties.starvation == "(c) 10-100M" ~ log10(sqrt(1e7 * 1e8)),
+      casualties.starvation == "(d) 100M-1B" ~ log10(sqrt(1e8 * 1e9)),
+      casualties.starvation == "(e) 1-8B" ~ log10(sqrt(1e9 * 8e9)),
+      TRUE ~ NA_real_
+    ),
+
+    # SUPPORT VARIABLES - Numeric conversions
+    support.nuclear.strike.on.russia_numeric = sapply(support.nuclear.strike.on.russia, extract_numeric_from_ordinal),
+    support.conventional.strike.on.russia_numeric = sapply(support.conventional.strike.on.russia, extract_numeric_from_ordinal),
+    support.increase.ukraine.aid_numeric = sapply(support.increase.ukraine.aid, extract_numeric_from_ordinal),
+    support.crippling.sanctions.on.russia_numeric = sapply(support.crippling.sanctions.on.russia, extract_numeric_from_ordinal),
+    support.ceasefire.ultimatum_numeric = sapply(support.ceasefire.ultimatum, extract_numeric_from_ordinal),
+
+    # SUPPORT VARIABLES - Binary conversions (1-2=0, 4-5=1, 3=NA)
+    support.nuclear.strike.on.russia_binary = case_when(
+      support.nuclear.strike.on.russia_numeric %in% c(1, 2) ~ 0,
+      support.nuclear.strike.on.russia_numeric %in% c(4, 5) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    support.conventional.strike.on.russia_binary = case_when(
+      support.conventional.strike.on.russia_numeric %in% c(1, 2) ~ 0,
+      support.conventional.strike.on.russia_numeric %in% c(4, 5) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    support.increase.ukraine.aid_binary = case_when(
+      support.increase.ukraine.aid_numeric %in% c(1, 2) ~ 0,
+      support.increase.ukraine.aid_numeric %in% c(4, 5) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    support.crippling.sanctions.on.russia_binary = case_when(
+      support.crippling.sanctions.on.russia_numeric %in% c(1, 2) ~ 0,
+      support.crippling.sanctions.on.russia_numeric %in% c(4, 5) ~ 1,
+      TRUE ~ NA_real_
+    ),
+    support.ceasefire.ultimatum_binary = case_when(
+      support.ceasefire.ultimatum_numeric %in% c(1, 2) ~ 0,
+      support.ceasefire.ultimatum_numeric %in% c(4, 5) ~ 1,
+      TRUE ~ NA_real_
+    ),
+
+    # DECISION FACTORS - Numeric conversions
+    decision.reduce.russian.retaliation_numeric = sapply(decision.reduce.russian.retaliation, extract_numeric_from_ordinal),
+    decision.punish.russia.signal.aggressors_numeric = sapply(decision.punish.russia.signal.aggressors, extract_numeric_from_ordinal),
+    decision.limit.diplomatic.support.for.russia_numeric = sapply(decision.limit.diplomatic.support.for.russia, extract_numeric_from_ordinal),
+    decision.avoid.killing.civilians.global.famine_numeric = sapply(decision.avoid.killing.civilians.global.famine, extract_numeric_from_ordinal),
+    decision.avoid.escalation_numeric = sapply(decision.avoid.escalation, extract_numeric_from_ordinal)
+  )
 
 # RESHAPE - DEFINE ABSTRACTED FUNCTION
 ReshapeThemeTable <- function(theme, data_table, questions_table, response_options_table, drop_not_participating = FALSE, extra_id_vars = NULL) {
@@ -598,7 +690,26 @@ ReshapeThemeTable <- function(theme, data_table, questions_table, response_optio
 }
 
 # DEFINE EXTRA ID VARIABLES (derived variables to include in reshaped tables)
-extra.id.vars <- c("age.group", "nationality.native", "language.native")
+# Include calculated variables based on single columns (not multi-column aggregates like means)
+extra.id.vars <- c(
+  "age.group", "nationality.native", "language.native",
+  # Awareness numeric conversions
+  "nw.awareness.1980s_numeric", "nw.awareness.recent.media_numeric", "nw.awareness.recent.academic_numeric",
+  # Casualty log-midpoint conversions
+  "casualties.blast_numeric_log", "casualties.radiation_numeric_log", "casualties.starvation_numeric_log",
+  # Support numeric conversions
+  "support.nuclear.strike.on.russia_numeric", "support.conventional.strike.on.russia_numeric",
+  "support.increase.ukraine.aid_numeric", "support.crippling.sanctions.on.russia_numeric",
+  "support.ceasefire.ultimatum_numeric",
+  # Support binary conversions
+  "support.nuclear.strike.on.russia_binary", "support.conventional.strike.on.russia_binary",
+  "support.increase.ukraine.aid_binary", "support.crippling.sanctions.on.russia_binary",
+  "support.ceasefire.ultimatum_binary",
+  # Decision factors numeric conversions
+  "decision.reduce.russian.retaliation_numeric", "decision.punish.russia.signal.aggressors_numeric",
+  "decision.limit.diplomatic.support.for.russia_numeric", "decision.avoid.killing.civilians.global.famine_numeric",
+  "decision.avoid.escalation_numeric"
+)
 
 # RESHAPE - AWARENESS
 awareness.tb <- ReshapeThemeTable(
@@ -612,7 +723,8 @@ awareness.tb <- ReshapeThemeTable(
   relocate(age.group, .after = age) %>%
   relocate(nationality.native, .after = country.of.residence) %>%
   relocate(language.native, .after = language) %>%
-  relocate(political.affiliation, .after = sex)
+  relocate(political.affiliation, .after = sex) %>%
+  rename(awareness.text = value.text, awareness.num = value.num)
 
 # RESHAPE - CASUALTY CAUSES
 casualty.causes.tb <- ReshapeThemeTable(
@@ -650,7 +762,8 @@ casualty.causes.tb <- casualty.causes.tb %>%
     ),
     # Calculate midpoint for descriptive purposes
     interval_midpoint = (interval_lower + interval_upper) / 2
-  )
+  ) %>%
+  rename(casualty.text = value.text, casualty.num = value.num)
 
 # RESHAPE - SUPPORT REACTION
 support.reaction.tb <- ReshapeThemeTable(
@@ -663,7 +776,8 @@ support.reaction.tb <- ReshapeThemeTable(
   relocate(age.group, .after = age) %>%
   relocate(nationality.native, .after = country.of.residence) %>%
   relocate(language.native, .after = language) %>%
-  relocate(political.affiliation, .after = sex)
+  relocate(political.affiliation, .after = sex) %>%
+  rename(support.text = value.text, support.num = value.num)
 
 # RESHAPE - DECISION FACTORS
 decision.factors.tb <- ReshapeThemeTable(
@@ -676,7 +790,8 @@ decision.factors.tb <- ReshapeThemeTable(
   relocate(age.group, .after = age) %>%
   relocate(nationality.native, .after = country.of.residence) %>%
   relocate(language.native, .after = language) %>%
-  relocate(political.affiliation, .after = sex)
+  relocate(political.affiliation, .after = sex) %>%
+  rename(decision.text = value.text, decision.num = value.num)
 
 # CREATE FINAL LIST OF CLEANED & REFORMATTED TABLES FOR EXPORT
 
@@ -714,7 +829,7 @@ names(export.ls) <- clean_table_names[clean_object_names %in% ls()]
 
 
 # 3-EXPORT CLEANED DATA -------------------------------------------------------------------------------
-export.logical <- FALSE
+export.logical <- TRUE
 
 if (export.logical) {
 
@@ -751,8 +866,20 @@ if (export.logical) {
       sheet_name <- paste0("Sheet", i)  # Assign default sheet names if missing
     }
 
+    # Clean data: Replace NA, NaN, Inf with empty strings to avoid Excel errors
+    data_cleaned <- export.ls[[i]] %>%
+      mutate(across(everything(), ~{
+        if (is.numeric(.)) {
+          # For numeric columns: replace NA, NaN, Inf with NA (will become empty)
+          ifelse(is.na(.) | is.nan(.) | is.infinite(.), NA_real_, .)
+        } else {
+          # For character columns: replace NA with empty string
+          ifelse(is.na(.), "", as.character(.))
+        }
+      }))
+
     wb$add_worksheet(sheet_name)  # Create a new sheet
-    wb$add_data(sheet = sheet_name, x = export.ls[[i]])  # Write data
+    wb$add_data(sheet = sheet_name, x = data_cleaned, na.strings = "")  # Write data with NAs as empty strings
   }
 
   wb$save(output.file.path, overwrite = TRUE)
@@ -1624,6 +1751,7 @@ prepare_regression_data <- function(config_row, data_tb, id.varnames) {
 
   # Get outcome and predictor variables
   outcome_var <- config_row$outcome_var
+  outcome_var <- map_column_names(outcome_var, data_source_name)
 
   # Parse predictors with type checking
   if (!is.null(config_row$predictors) &&
@@ -1631,6 +1759,7 @@ prepare_regression_data <- function(config_row, data_tb, id.varnames) {
     is.character(config_row$predictors) &&
     nchar(trimws(config_row$predictors)) > 0) {
     predictors <- trimws(strsplit(config_row$predictors, ",")[[1]])
+    predictors <- map_column_names(predictors, data_source_name)
   } else {
     stop("predictors must be specified in config")
   }
