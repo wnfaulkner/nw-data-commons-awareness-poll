@@ -28,11 +28,11 @@ library(lubridate)
 library(openxlsx2)
 # library(MASS)         # For polr (proportional odds logistic regression)
 library(ggplot2)
+library(ggalluvial)   # For Sankey/alluvial diagrams
 # library(ggpubr)       # For statistical plots
 # library(psych)        # For descriptive stats
 # library(Hmisc)        # For rcorr if needed
 # library(broom)
-
 
 # SECTION CLOCKING
 section0.duration <- Sys.time() - section0.starttime
@@ -40,7 +40,7 @@ section0.duration
 
 # 0.5-HELPER FUNCTIONS -------------------------------------------------------------------------------
 
-# DATA VALIDATION FUNCTIONS ----
+# DATA VALIDATION FUNCTIONS
 # These functions catch configuration errors early with clear messages
 
 validate_google_sheets_data <- function(data.tb, questions.tb,
@@ -249,7 +249,7 @@ validate_model_config <- function(config_row, verbose = TRUE) {
   return(TRUE)
 }
 
-# UNIFIED MODEL FITTING FRAMEWORK ----
+# UNIFIED MODEL FITTING FRAMEWORK
 # This framework provides a consistent interface for all regression model types
 # and makes it easy to add new model types (OLS, binary logit, multinomial, GAM)
 
@@ -485,7 +485,7 @@ recode_from_theme <- function(varname, theme) {
 # Step 3: Apply to each variable that needs recoding
 walk2(recode.mapping.tb$var.name, recode.mapping.tb$q.theme, recode_from_theme)
 
-# RECODE POLITICAL AFFILIATION & ADD USEFUL VARIABLES -----
+# RECODE POLITICAL AFFILIATION & ADD USEFUL VARIABLES
 data.tb %<>%
   mutate(
     political.affiliation = dplyr::case_when(
@@ -826,10 +826,8 @@ export.ls <-
   lapply(., function(x) {x %>% select(-any_of(c("q.num", "q.id", "q.theme")))}) # Remove q.num and q.id if they exist in any table
 
 names(export.ls) <- clean_table_names[clean_object_names %in% ls()]
-
-
 # 3-EXPORT CLEANED DATA -------------------------------------------------------------------------------
-export.logical <- TRUE
+export.logical <- FALSE
 
 if (export.logical) {
 
@@ -893,7 +891,135 @@ if (export.logical) {
 }
 
 # 4-ANALYSIS, STATISTICAL TESTS -------------------------------------------------------------------------------
-# 4A-BIVARIATE TESTS
+# 4A SPECIAL VISUALIZATIONS
+
+# SANKEY DIAGRAM - NUCLEAR WINTER AWARENESS FLOWS
+# This diagram visualizes how awareness levels flow across three sources:
+# 1980s awareness, recent academic awareness, and recent media awareness
+
+# Prepare data for Sankey diagram
+sankey_data <- data.tb %>%
+  select(
+    nw.awareness.1980s,
+    nw.awareness.recent.academic,
+    nw.awareness.recent.media
+  ) %>%
+  # Remove any rows with missing data
+  filter(
+    !is.na(nw.awareness.1980s),
+    !is.na(nw.awareness.recent.academic),
+    !is.na(nw.awareness.recent.media)
+  ) %>%
+  # Count frequency of each unique pattern
+  group_by(
+    nw.awareness.1980s,
+    nw.awareness.recent.academic,
+    nw.awareness.recent.media
+  ) %>%
+  summarise(freq = n(), .groups = 'drop') %>%
+  # Ensure awareness levels are ordered factors (reversed so "4. know a lot" appears on top)
+  mutate(
+    nw.awareness.1980s = factor(
+      nw.awareness.1980s,
+      levels = c("4. know a lot", "3. know something", "2. heard a little", "1. never heard"),
+      ordered = TRUE
+    ),
+    nw.awareness.recent.academic = factor(
+      nw.awareness.recent.academic,
+      levels = c("4. know a lot", "3. know something", "2. heard a little", "1. never heard"),
+      ordered = TRUE
+    ),
+    nw.awareness.recent.media = factor(
+      nw.awareness.recent.media,
+      levels = c("4. know a lot", "3. know something", "2. heard a little", "1. never heard"),
+      ordered = TRUE
+    )
+  )
+
+# Calculate total number of respondents
+total_n <- sum(sankey_data$freq)
+
+# Create Sankey/alluvial diagram
+awareness_sankey <- ggplot(
+  sankey_data,
+  aes(
+    y = freq,
+    axis1 = nw.awareness.1980s,
+    axis2 = nw.awareness.recent.academic,
+    axis3 = nw.awareness.recent.media
+  )
+) +
+  # Add flows (alluvium) - single grey color
+  geom_alluvium(
+    fill = "grey60",
+    width = 1/6,
+    alpha = 0.7,
+    curve_type = "cubic"
+  ) +
+  # Add stacked bars (strata) - colored by awareness level
+  geom_stratum(
+    aes(fill = after_stat(stratum)),
+    width = 1/6,
+    color = "grey30",
+    size = 0.3
+  ) +
+  # Add labels to strata with percentages
+  geom_text(
+    stat = "stratum",
+    aes(label = paste0(after_stat(stratum), "\n(",
+                       round(after_stat(count) / total_n * 100, 1), "%)")),
+    size = 5,
+    fontface = "bold"
+  ) +
+  # Color scheme: light to dark as awareness increases (reversed order)
+  scale_fill_manual(
+    name = "Awareness Level",
+    values = c(
+      "4. know a lot" = "#313695",        # Darkest blue (on top)
+      "3. know something" = "#4575b4",   # Medium blue
+      "2. heard a little" = "#91bfdb",   # Light blue
+      "1. never heard" = "#e0f3f8"       # Lightest blue (on bottom)
+    )
+  ) +
+  # Axis labels - reduced expand to bring labels closer
+  scale_x_discrete(
+    limits = c("1980s", "Recent\nAcademic", "Recent\nMedia"),
+    expand = c(0.05, 0.05)
+  ) +
+  # Labels and theme
+  labs(
+    title = "Nuclear Winter Awareness Flows Across Information Sources",
+    subtitle = "Each flow represents respondents with the same awareness pattern",
+    y = "Number of Respondents"
+  ) +
+  theme_minimal() +
+  theme(
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.text.y = element_text(size = 10),
+    axis.text.x = element_text(size = 11, face = "bold"),
+    plot.title = element_text(size = 14, face = "bold"),
+    plot.subtitle = element_text(size = 11),
+    legend.position = "none"
+  )
+
+# Display the plot
+print(awareness_sankey)
+
+# Save the plot as PNG
+ggsave(
+  filename = "outputs/awareness_sankey_diagram.png",
+  plot = awareness_sankey,
+  width = 12,
+  height = 8,
+  dpi = 300,
+  bg = "white"
+)
+
+cat("\nSankey diagram saved to: outputs/awareness_sankey_diagram.png\n")
+
+
+# 4B-BIVARIATE TESTS 
 run.bivariate.tests <- FALSE
 
 if (run.bivariate.tests) {
@@ -1682,9 +1808,9 @@ if (run.bivariate.tests) {
 }
 
 
-# 4B-REGRESSIONS
+# 4C-REGRESSIONS ----
 
-# REGRESSION HELPER FUNCTIONS ----
+# REGRESSION HELPER FUNCTIONS
 
 # CALCULATE VIF (Variance Inflation Factor) FOR MULTICOLLINEARITY DETECTION
 calculate_vif <- function(model) {
@@ -2720,7 +2846,7 @@ if (test_fit_pom) {
   }
 }
 
-# REGRESSION DIAGNOSTIC & VISUALIZATION FUNCTIONS ----
+# REGRESSION DIAGNOSTIC & VISUALIZATION FUNCTIONS
 
 # These functions create diagnostic plots and coefficient plots for regression models
 
@@ -3095,9 +3221,7 @@ plot_ppom_threshold_coefficients <- function(ppom_result, plot_title = NULL) {
 
   return(threshold_plot)
 }
-
-
-# EXPORT FUNCTIONS ----
+# EXPORT FUNCTIONS 
 
 # CREATE TIMESTAMPED OUTPUT DIRECTORY
 create_timestamped_output_dir <- function(base_dir = "outputs") {
@@ -3114,7 +3238,7 @@ create_timestamped_output_dir <- function(base_dir = "outputs") {
   return(output_dir)
 }
 
-# PDF GENERATION HELPER FUNCTIONS ----
+# PDF GENERATION HELPER FUNCTIONS
 # These functions reduce repetition in PDF report generation
 
 pdf_new_page_with_title <- function(title, subtitle = NULL, add_line = TRUE) {
