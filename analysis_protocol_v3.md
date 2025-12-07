@@ -12,11 +12,12 @@ This version updates **v2** to make the protocol as **LLM-executable** and unamb
 
 ### 0.1 Core scripts and objects
 
-- **Main data script**: `Ingram_NNW_Awareness.R`  
-  - Purpose: **data cleaning + reshaping + export** only.
-  - Do **not** modify existing cleaning / reshaping / export code.
+- **Main data script**: `publication_analysis.R`
+  - Purpose: **data cleaning + reshaping** only.
+  - Do **not** modify existing cleaning / reshaping code.
+  - Legacy script `Ingram_NW_Awareness.R` contains old config-based analyses (to be removed in final refactor).
 
-Running `Ingram_NW_Awareness.R` to completion should create (in the active R session):
+Running `publication_analysis.R` to completion should create (in the active R session):
 
 - `data.tb` – wide table, one row per respondent.  
 - Long tables created via `ReshapeThemeTable()`:
@@ -86,11 +87,11 @@ Numeric 1–5 columns with prefix `decision.` including:
 
 Run first:
 
-```
-Ingram_NW_Awareness.R
+```r
+source("publication_analysis.R")
 ```
 
-Produces all clean objects.
+Produces all clean objects in the R session.
 
 ### 1.2 New analysis scripts
 
@@ -365,21 +366,72 @@ Proceed only after:
 
 ---
 
-## 8. LLM DO/DON’T CHECKLIST
+## 8. FINAL REFACTOR & CODE CLEANUP
+
+**BOOKMARK FOR HUMAN APPROVAL**
+
+This section should be executed **only after** all RQ analyses (RQ1–RQ5) are complete and approved by the human analyst.
+
+### 8.1 Purpose
+
+Remove legacy config-based analysis code from `Ingram_NW_Awareness.R` to prepare the repository for publication alongside the research paper.
+
+### 8.2 Files to review for removal
+
+From `Ingram_NW_Awareness.R`:
+
+1. **Section 4A** – Special visualizations (Sankey diagram code)
+   - **Decision**: Keep or remove? (May be useful for descriptive reporting)
+
+2. **Section 4B** – Regression execution loop (lines ~578–890)
+   - **Decision**: REMOVE (replaced by RQ-specific analysis scripts)
+
+3. **Commented-out code** – Bivariate tests and other legacy analysis
+   - **Decision**: REMOVE
+
+### 8.3 Files to potentially archive or remove
+
+- Old output folders in `outputs/` with config-based results
+- Any temporary or intermediate analysis files not part of final publication workflow
+
+### 8.4 Verification checklist
+
+After refactoring:
+
+- [ ] `publication_analysis.R` runs without errors
+- [ ] All RQ scripts (RQ1–RQ5) run successfully after sourcing `publication_analysis.R`
+- [ ] No broken dependencies on removed code
+- [ ] All helper functions in `R/` directory are still functional
+- [ ] Repository is clean and ready for public release
+
+### 8.5 Documentation updates
+
+Update `README.md` (if exists) or create one to document:
+
+- Purpose of the analysis
+- How to run `publication_analysis.R`
+- How to run each RQ analysis script in sequence
+- Description of output files and their locations
+
+---
+
+## 9. LLM DO/DON'T CHECKLIST
 
 ### DO:
 
-- Assume `Ingram_NW_Awareness.R` was run first  
-- Add code only to new scripts under `/analysis/`  
-- Write `.md` + `.csv` results to timestamped folders  
+- Assume `publication_analysis.R` was sourced first
+- Add code only to new scripts under `analysis/`
+- Write `.md` + `.csv` results to timestamped folders
 - Follow naming rules (`rq1_*`, `rq2_*`, etc.)
+- Update this protocol document as decisions are made during implementation
 
 ### DO NOT:
 
-- Modify cleaning code  
-- Modify reshaping or export code  
-- Recode variables in the cleaning script  
+- Modify cleaning code in `publication_analysis.R`
+- Modify reshaping code
+- Recode variables in the cleaning script
 - Make substantive decisions where the protocol places a **BOOKMARK FOR HUMAN INPUT**
+- Execute Section 8 (Final Refactor) without explicit human approval
 
 ---
 
