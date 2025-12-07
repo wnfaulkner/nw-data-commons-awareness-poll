@@ -9,11 +9,6 @@
 #   - publication_analysis.R must be run first to create data.tb
 #
 # OUTPUTS (in timestamped output folder):
-#   - RQ1_awareness_alpha.csv
-#   - RQ1_awareness_cor_pearson.csv
-#   - RQ1_awareness_cor_polychoric.csv
-#   - RQ1_awareness_fa_loadings.csv
-#   - RQ1_awareness_mean_index.csv
 #   - RQ1_awareness_structure.md
 # ==============================================================================
 
@@ -153,46 +148,7 @@ cat("    Range:", round(min(rq1_awareness_mean$awareness_mean, na.rm = TRUE), 3)
 # 3.5 Generate Outputs
 # ==============================================================================
 
-cat("3.5 Generating output files...\n")
-
-# Save Cronbach's alpha
-alpha_output <- data.frame(
-  statistic = c("raw_alpha", "std_alpha", "n_items", "n_observations"),
-  value = c(
-    rq1_alpha$total$raw_alpha,
-    rq1_alpha$total$std.alpha,
-    ncol(awareness_matrix),
-    nrow(rq1_awareness_items)
-  )
-)
-write.csv(alpha_output,
-          file.path(rq1_dir, "RQ1_awareness_alpha.csv"),
-          row.names = FALSE)
-cat("  ✓ RQ1_awareness_alpha.csv\n")
-
-# Save Pearson correlation matrix
-write.csv(rq1_cor_pearson,
-          file.path(rq1_dir, "RQ1_awareness_cor_pearson.csv"),
-          row.names = TRUE)
-cat("  ✓ RQ1_awareness_cor_pearson.csv\n")
-
-# Save polychoric correlation matrix
-write.csv(rq1_cor_polychoric,
-          file.path(rq1_dir, "RQ1_awareness_cor_polychoric.csv"),
-          row.names = TRUE)
-cat("  ✓ RQ1_awareness_cor_polychoric.csv\n")
-
-# Save factor analysis loadings
-write.csv(rq1_fa_loadings,
-          file.path(rq1_dir, "RQ1_awareness_fa_loadings.csv"),
-          row.names = FALSE)
-cat("  ✓ RQ1_awareness_fa_loadings.csv\n")
-
-# Save awareness mean index
-write.csv(rq1_awareness_mean,
-          file.path(rq1_dir, "RQ1_awareness_mean_index.csv"),
-          row.names = FALSE)
-cat("  ✓ RQ1_awareness_mean_index.csv\n")
+cat("3.5 Generating markdown report...\n")
 
 # Generate Markdown summary
 md_file <- file.path(rq1_dir, "RQ1_awareness_structure.md")
@@ -279,20 +235,13 @@ md_content <- c(
                 round(rq1_fa$Vaccounted["Proportion Var", "MR1"] * 100, 1),
                 "% of variance in a single-factor solution. Review individual item correlations before proceeding.")),
   "",
-  "## Files Generated",
-  "",
-  "- `RQ1_awareness_alpha.csv` - Internal consistency statistics",
-  "- `RQ1_awareness_cor_pearson.csv` - Pearson correlation matrix",
-  "- `RQ1_awareness_cor_polychoric.csv` - Polychoric correlation matrix",
-  "- `RQ1_awareness_fa_loadings.csv` - Factor loadings and communalities",
-  "- `RQ1_awareness_mean_index.csv` - Awareness mean index with IDs",
-  "",
   "---",
   paste0("*Generated: ", Sys.time(), "*")
 )
 
 writeLines(md_content, md_file)
-cat("  ✓ RQ1_awareness_structure.md\n\n")
+cat("  ✓ RQ1_awareness_structure.md\n")
+cat("  (Note: CSV outputs disabled - data retained in R environment)\n\n")
 
 # ==============================================================================
 # Summary and Next Steps

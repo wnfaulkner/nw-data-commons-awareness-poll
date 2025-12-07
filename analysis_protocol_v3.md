@@ -122,29 +122,225 @@ dir.create(rq1_dir, recursive = TRUE, showWarnings = FALSE)
 
 Output formats:
 
-- **Markdown** summary file (`.md`)
-- Supporting **CSV** tables
+- **Markdown** summary file (`.md`) - comprehensive single file with all results
+- **PDF** diagnostic report - comprehensive single file with all regression diagnostics
+- **No CSV files** - all results integrated into markdown and PDF
 
 ---
 
 ## 2. MODELING ENGINE & ASSUMPTION TESTING
 
-### 2.1 Ordinal modeling workflow
+### 2.1 Ordinal modeling workflow: POM → PPOM escalation
 
-Start with POM → test PO → escalate to PPOM only if needed:
+**MANDATORY PROCEDURE FOR ALL ORDINAL REGRESSIONS**
 
-1. **Fit POM** via helper: `fit_pom()`  
-2. **Test PO assumption**:
-   - Brant test or equivalent POA tests already in script  
-   - Use residual diagnostics if needed  
-3. **If violated**, fit PPOM via helper: `fit_ppom()` (likely wraps `VGAM::vglm()`)  
-4. Retain both models and explain divergence in `.md` output
+Every ordinal regression analysis (including RQ2, RQ3, and any exploratory models) must follow this comprehensive workflow. The protocol ensures rigorous assumption testing and principled model escalation.
+
+#### 2.1.1 Initial model: Proportional Odds Model (POM)
+
+All ordinal regression analyses **must** begin by fitting a Proportional Odds Model using one of:
+
+- `ordinal::clm()` (preferred for full diagnostics)
+- `fit_pom()` helper function (wraps `MASS::polr()`)
+
+Example:
+```r
+model_pom <- fit_pom(
+  formula = outcome ~ predictor + age + sex + ...,
+  data = analysis_data
+)
+```
+
+#### 2.1.2 Diagnostic phase: Complete visual and quantitative inspection
+
+**REQUIRED DIAGNOSTIC PLOTS** (4-panel layout):
+
+1. **Residuals vs Fitted**
+   - Purpose: Detect systematic patterns, heteroscedasticity
+   - Ideal: Random scatter around zero
+   - Warning signs: Curvature, fanning, clustering
+
+2. **Normal Q-Q Plot**
+   - Purpose: Assess normality of residuals
+   - Ideal: Points closely follow diagonal reference line
+   - Warning signs: Heavy tails, systematic deviations
+
+3. **Scale-Location Plot** (√|residuals| vs fitted)
+   - Purpose: Check homoscedasticity assumption
+   - Ideal: Horizontal trend line, even spread
+   - Warning signs: Upward/downward trend, uneven spread
+
+4. **Observed vs Predicted**
+   - Purpose: Assess model calibration
+   - Ideal: Points cluster near diagonal with even spread
+   - Warning signs: Systematic over/underprediction, poor calibration
+
+**Generate diagnostics using:**
+```r
+residuals_tb <- calculate_pom_residuals(model_pom, verbose = FALSE)
+diag_plot <- plot_pom_diagnostics(
+  pom_result = model_pom,
+  residuals_tb = residuals_tb,
+  plot_title = "Model Name"
+)
+```
+
+**QUANTITATIVE INSPECTION RULES:**
+
+For deviance and Pearson residuals:
+
+- **Acceptable range**: Most residuals should fall within [-3, +3]
+- **Warning threshold**: Any residuals > |4| indicate potential outliers
+- **Critical threshold**: Multiple residuals > |5| suggest serious model misspecification
+
+**DECISION RULE FOR DIAGNOSTICS:**
+
+Proceed to proportional odds testing (2.1.3) if diagnostics are acceptable. If diagnostics reveal serious issues:
+- Document the issues in markdown output
+- Consider data transformations or covariate adjustments before proceeding
+- Flag for human review if issues persist
+
+#### 2.1.3 Proportional odds assumption testing
+
+**REQUIRED TEST:** Brant test for proportional odds assumption
+
+Execute using:
+```r
+brant_result <- perform_brant_test(model_pom$model, verbose = TRUE)
+```
+
+The Brant test examines whether the proportional odds assumption holds by testing if coefficients are constant across outcome thresholds.
+
+**INTERPRETATION:**
+
+- **Omnibus p-value > 0.05**: Proportional odds assumption holds → retain POM
+- **Omnibus p-value ≤ 0.05**: Assumption violated → must escalate to PPOM
+- **Individual item p-values**: Identify which predictors violate the assumption
+
+**ERROR HANDLING:**
+
+If Brant test fails (due to package conflicts or data issues):
+```r
+brant_result <- tryCatch({
+  perform_brant_test(model_pom$model, verbose = FALSE)
+}, error = function(e) {
+  cat("WARNING: Brant test failed. Defaulting to POM.\n")
+  list(omnibus_p_value = 0.99, brant_test_failed = TRUE)
+})
+```
+
+Document any test failures in the markdown output.
+
+#### 2.1.4 Model escalation: Partial Proportional Odds Model (PPOM)
+
+**WHEN REQUIRED:** If Brant test omnibus p-value ≤ 0.05
+
+**Fit PPOM using:**
+```r
+model_ppom <- fit_ppom(
+  formula = outcome ~ predictor + age + sex + ...,
+  data = analysis_data,
+  parallel = FALSE ~ predictor_that_violated_assumption
+)
+```
+
+The PPOM relaxes the proportional odds constraint for specific predictors that violated the assumption, allowing their coefficients to vary across outcome thresholds.
+
+**RETAIN BOTH MODELS:** Always keep both POM and PPOM results for comparison and transparency.
+
+#### 2.1.5 Model comparison: Predicted probability differences
+
+**REQUIRED COMPARISON:** Compute predicted probabilities from both models for representative covariate profiles
+
+```r
+# Generate predictions for both models
+pred_pom <- predict(model_pom$model, type = "probs", newdata = test_profiles)
+pred_ppom <- predict(model_ppom, type = "response", newdata = test_profiles)
+
+# Calculate maximum absolute difference
+delta_p_max <- max(abs(pred_pom - pred_ppom))
+```
+
+**DECISION RULE:**
+
+- **If Δp_max ≤ 0.03**: Models yield substantively similar predictions → may use simpler POM for parsimony
+- **If Δp_max > 0.03**: Meaningful differences exist → must use PPOM and report both
+
+**DOCUMENTATION REQUIREMENT:** Report Δp_max in markdown output regardless of which model is chosen.
+
+#### 2.1.6 Final model selection and justification
+
+**SELECTION CRITERIA:**
+
+1. **If PO assumption holds** (Brant p > 0.05):
+   - Use POM
+   - Document: "Proportional odds assumption satisfied (Brant p = X.XX)"
+
+2. **If PO assumption violated AND Δp_max > 0.03**:
+   - Use PPOM
+   - Document: "Proportional odds assumption violated (Brant p = X.XX). PPOM used due to meaningful prediction differences (Δp_max = X.XX)"
+
+3. **If PO assumption violated BUT Δp_max ≤ 0.03**:
+   - May use POM for parsimony
+   - Document: "Proportional odds assumption violated (Brant p = X.XX), but prediction differences minimal (Δp_max = X.XX). POM retained for parsimony"
+
+**MANDATORY MARKDOWN DOCUMENTATION:**
+
+Every ordinal regression output must include a "Model Diagnostics" section with:
+
+- Residual statistics (deviance range, Pearson range)
+- Brant test results (omnibus and per-predictor p-values)
+- Note about diagnostic plot availability in separate PDF
+- If PPOM fitted: Δp_max and model comparison summary
+- Final model selection justification
+
+#### 2.1.7 PDF diagnostic report requirements
+
+**REQUIRED OUTPUT:** Single comprehensive PDF file containing all regression diagnostics
+
+**Page structure for each model:**
+
+- **Page 1:** Coefficient table (text table with all regression coefficients)
+- **Page 2:** Forest plot (odds ratios with confidence intervals)
+- **Page 3:** 4-panel diagnostic plots (residuals vs fitted, Q-Q, scale-location, observed vs predicted)
+
+**If both POM and PPOM fitted:**
+
+- Pages 1-3: POM (coefficient table, forest plot, diagnostics)
+- Pages 4-6: PPOM (coefficient table, forest plot, diagnostics)
+- Page 7: Side-by-side predicted probability comparison
+
+**Generate using:**
+```r
+pdf_file <- file.path(output_dir, "MODEL_NAME_diagnostics.pdf")
+pdf(pdf_file, width = 11, height = 8.5, onefile = TRUE)
+# Page 1: grid.arrange coefficient table
+# Page 2: grid.arrange forest plot
+# Page 3: grid.arrange 4-panel diagnostics
+# ... repeat for additional models
+dev.off()
+```
+
+**Note:** All numerical results (coefficients, p-values, etc.) must also appear in the markdown file for easy reference.
 
 ### 2.2 Covariates
 
 Default covariates in all adjusted models:
 
 - `age`, `sex`, `ethnicity`, `education`, `political.affiliation`, `income`
+
+When analyzing country-specific subsets, `country.of.residence` should be omitted.
+
+### 2.3 Application to specific research questions
+
+The POM→PPOM workflow in Section 2.1 applies to:
+
+- **RQ2**: Both model 1 (separate awareness items) and model 2 (awareness mean)
+- **RQ3**: Unadjusted and adjusted treatment effect models
+- **RQ5**: All exploratory integration models
+- **Any ad-hoc ordinal regressions**
+
+Each RQ section below references this workflow but does not repeat the full procedure.
 
 ---
 
@@ -193,12 +389,17 @@ awareness_mean_z = scale(awareness_mean)
 
 ### 3.5 Outputs
 
-- `RQ1_awareness_alpha.csv`  
-- `RQ1_awareness_cor_pearson.csv`  
-- `RQ1_awareness_cor_polychoric.csv`  
-- `RQ1_awareness_fa_loadings.csv`  
-- `RQ1_awareness_mean_index.csv`  
-- Markdown summary: `RQ1_awareness_structure.md`
+**Single markdown file:** `RQ1_awareness_structure.md`
+
+Contains:
+- Cronbach's alpha results
+- Pearson correlation matrix
+- Polychoric correlation matrix
+- Factor analysis loadings
+- Variance explained
+- Awareness mean index summary statistics
+
+**No PDF required** for RQ1 (no regression models)
 
 ---
 
@@ -219,42 +420,157 @@ Include covariates.
 
 ### 4.2 Check A – Distribution & monotonicity
 
-- Plot distribution of `awareness_mean`  
-- Examine support means across quartiles  
+- Plot distribution of `awareness_mean`
+- Examine support means across quartiles
 
 ### 4.3 Check B – Item-wise vs mean model comparison
 
-Fit two models:
+**MANDATORY WORKFLOW:** Follow Section 2.1 (POM→PPOM) for both models.
 
-- **Model 1:** separate items  
-- **Model 2:** mean index  
+#### 4.3.1 Fit initial POM models
 
-Extract predicted probabilities for representative covariate sets.
+- **Model 1 (POM):** separate awareness items
+  ```r
+  model1_pom <- fit_pom(
+    formula = support.nuclear.strike.on.russia_numeric ~
+              nw.awareness.1980s_numeric +
+              nw.awareness.recent.academic_numeric +
+              nw.awareness.recent.media_numeric +
+              age + sex + ethnicity + political.affiliation +
+              employment.status + student.status,
+    data = rq2_data
+  )
+  ```
+
+- **Model 2 (POM):** awareness mean index
+  ```r
+  model2_pom <- fit_pom(
+    formula = support.nuclear.strike.on.russia_numeric ~
+              awareness_mean +
+              age + sex + ethnicity + political.affiliation +
+              employment.status + student.status,
+    data = rq2_data
+  )
+  ```
+
+#### 4.3.2 Diagnostics and assumption testing
+
+**For each POM model, execute:**
+
+1. Calculate residuals: `calculate_pom_residuals()`
+2. Generate diagnostic plots: `plot_pom_diagnostics()`
+3. Generate forest plots: `plot_pom_coefficients()`
+4. **Run Brant test**: `perform_brant_test()`
+   - Document omnibus p-value
+   - Document per-predictor p-values
+
+#### 4.3.3 PPOM escalation (if needed)
+
+**If Brant omnibus p ≤ 0.05 for Model 1:**
+
+```r
+model1_ppom <- fit_ppom(
+  formula = support.nuclear.strike.on.russia_numeric ~
+            nw.awareness.1980s_numeric +
+            nw.awareness.recent.academic_numeric +
+            nw.awareness.recent.media_numeric +
+            age + sex + ethnicity + political.affiliation +
+            employment.status + student.status,
+  data = rq2_data,
+  parallel = FALSE ~ [predictors_that_violated]
+)
+```
+
+- Calculate residuals and generate diagnostics for PPOM
+- **Compute Δp_max** between Model 1 POM and Model 1 PPOM
+- **Select final Model 1** per Section 2.1.6 criteria
+
+**If Brant omnibus p ≤ 0.05 for Model 2:**
+
+```r
+model2_ppom <- fit_ppom(
+  formula = support.nuclear.strike.on.russia_numeric ~
+            awareness_mean +
+            age + sex + ethnicity + political.affiliation +
+            employment.status + student.status,
+  data = rq2_data,
+  parallel = FALSE ~ [predictors_that_violated]
+)
+```
+
+- Calculate residuals and generate diagnostics for PPOM
+- **Compute Δp_max** between Model 2 POM and Model 2 PPOM
+- **Select final Model 2** per Section 2.1.6 criteria
+
+#### 4.3.4 Cross-model comparison (Items vs Mean)
+
+After selecting final versions of Model 1 and Model 2:
+
+Extract predicted probabilities for representative covariate sets from both final models.
 
 Compute:
 
-```
-delta_p_max = max(abs(p_hat_items - p_hat_mean))
+```r
+delta_p_max_cross = max(abs(p_hat_model1_final - p_hat_model2_final))
 ```
 
 Threshold:
 
-- **Use mean index if** `delta_p_max ≤ 0.03`.
+- **Use mean index if** `delta_p_max_cross ≤ 0.03`
 
 ### 4.4 Final decision flag
 
 ```r
-rq2_awareness_mean_ok_overall <- 
+rq2_awareness_mean_ok_overall <-
   (rq1_alpha$total$raw_alpha >= 0.7) &
   (delta_p_max <= 0.03)
 ```
 
+If this flag is `FALSE`, downstream analyses (RQ5) should use **separate awareness items** rather than the mean index.
+
 ### 4.5 Outputs
 
-- `RQ2_awareness_mean_model_comparison.csv`  
-- `RQ2_awareness_mean_effects.csv`  
-- Markdown: `RQ2_awareness_support.md`  
-  - Includes flag explaining whether `awareness_mean` is used downstream  
+**Required files (2 total):**
+
+**1. Markdown file:** `RQ2_awareness_support.md`
+
+Contains:
+- Overview and sample description
+- Distribution and monotonicity check
+- Full coefficient tables for both models
+- Residual statistics (deviance and Pearson ranges)
+- Brant test results for each model
+- Model comparison (Δp_max between Model 1 and Model 2)
+- Final decision flag and interpretation
+- Reference to diagnostic PDF
+
+**2. PDF file:** `RQ2_POM_diagnostics.pdf`
+
+**Minimum page structure (POM only):**
+- **Pages 1-3: Model 1 POM (Separate Items)**
+  - Page 1: Coefficient table
+  - Page 2: Forest plot
+  - Page 3: 4-panel diagnostic plots
+- **Pages 4-6: Model 2 POM (Awareness Mean)**
+  - Page 4: Coefficient table
+  - Page 5: Forest plot
+  - Page 6: 4-panel diagnostic plots
+
+**If PPOM fitted for Model 1:**
+- **Pages 7-9: Model 1 PPOM**
+  - Page 7: Coefficient table
+  - Page 8: Forest plot
+  - Page 9: 4-panel diagnostic plots
+- **Page 10: Model 1 POM vs PPOM comparison** (predicted probabilities)
+
+**If PPOM fitted for Model 2:**
+- **Pages 11-13: Model 2 PPOM** (or 7-9 if Model 1 PPOM not fitted)
+  - Coefficient table
+  - Forest plot
+  - 4-panel diagnostic plots
+- **Page 14 (or 10): Model 2 POM vs PPOM comparison** (predicted probabilities)
+
+**Maximum pages:** 14 (if both models require PPOM)  
 
 ---
 
@@ -270,29 +586,87 @@ rq3_data <- data.tb %>%
 
 ### 5.2 Unadjusted effects
 
-Compute mean support and proportion ≥4 by treatment vs control.
+Compute descriptive statistics by treatment vs control:
 
-### 5.3 POM → PPOM escalation
+- Mean support (1-5 scale)
+- Proportion with high support (≥4)
+- Standard deviations
 
-1. Fit **unadjusted POM**  
-2. Fit **adjusted POM**  
-3. Test PO assumption  
-4. If violated, fit **adjusted PPOM**  
-5. Retain all models  
+### 5.3 Ordinal regression models
+
+**MANDATORY WORKFLOW:** Follow Section 2.1 (POM→PPOM) for all models.
+
+**Model sequence:**
+
+1. **Unadjusted POM**
+   ```r
+   model_unadjusted <- fit_pom(
+     formula = support.nuclear.strike.on.russia_numeric ~ shown.infographic,
+     data = rq3_data
+   )
+   ```
+
+2. **Adjusted POM** (with covariates)
+   ```r
+   model_adjusted <- fit_pom(
+     formula = support.nuclear.strike.on.russia_numeric ~
+               shown.infographic + age + sex + ethnicity +
+               education + political.affiliation + income,
+     data = rq3_data
+   )
+   ```
+
+**For each model, execute:**
+
+1. Calculate residuals: `calculate_pom_residuals()`
+2. Generate diagnostic plots: `plot_pom_diagnostics()`
+3. Generate forest plots: `plot_pom_coefficients()`
+4. Run Brant test: `perform_brant_test()`
+5. **If PO assumption violated:**
+   - Fit corresponding PPOM model
+   - Compare predicted probabilities (Δp_max)
+   - Retain both POM and PPOM
+   - Document model selection justification per Section 2.1.6
 
 ### 5.4 Predicted probabilities
 
 Compute predicted probabilities for:
 
-- Treatment vs control  
-- Subgroups (e.g., political affiliation)  
-- Country-specific subsets as needed  
+- **Treatment vs control** (primary comparison)
+- **Subgroups by political affiliation** (e.g., Democrat, Republican, Labour, Conservative)
+- **Country-specific subsets** if sample sizes permit (USA, UK)
+
+Use representative covariate profiles (e.g., median age, modal categories).
 
 ### 5.5 Outputs
 
-- `RQ3_treatment_models_summary.csv`  
-- `RQ3_treatment_effects_predictions.csv`  
-- Markdown: `RQ3_treatment_effects.md`  
+**Required files (2 total):**
+
+**1. Markdown file:** `RQ3_treatment_effects.md`
+
+Contains:
+- Overview and sample description
+- Descriptive statistics (mean support by treatment/control)
+- Full coefficient tables for unadjusted and adjusted models
+- Residual statistics (deviance and Pearson ranges)
+- Brant test results for each model
+- PPOM results if fitted, including Δp_max
+- Predicted probabilities for treatment vs control
+- Model selection justifications
+- Reference to diagnostic PDF
+
+**2. PDF file:** `RQ3_treatment_diagnostics.pdf`
+
+Page structure:
+- **Pages 1-3: Unadjusted Model**
+  - Page 1: Coefficient table
+  - Page 2: Forest plot
+  - Page 3: 4-panel diagnostic plots
+- **Pages 4-6: Adjusted Model**
+  - Page 4: Coefficient table
+  - Page 5: Forest plot
+  - Page 6: 4-panel diagnostic plots
+- **Additional pages if PPOM fitted for either model** (following same 3-page structure per model)  
 
 ---
 
@@ -337,10 +711,18 @@ Do not create indices until instructed.
 
 ### 6.5 Outputs
 
-- `RQ4_decision_factors_loadings_1factor.csv`  
-- `RQ4_decision_factors_loadings_2factor.csv`  
-- `RQ4_decision_factors_loadings_3factor.csv`  
-- Markdown: `RQ4_decision_factors_structure.md`  
+**Single markdown file:** `RQ4_decision_factors_structure.md`
+
+Contains:
+- Overview and sample description
+- Decision factor descriptive profiles by support level
+- Polychoric correlation matrix
+- 1-factor solution (loadings, variance explained)
+- 2-factor solution (loadings, variance explained)
+- 3-factor solution (loadings, variance explained)
+- Human interpretation bookmark
+
+**No PDF required** for RQ4 (no regression models)  
 
 ---
 
@@ -348,21 +730,83 @@ Do not create indices until instructed.
 
 ### 7.1 Conditional logic
 
+**BOOKMARK FOR HUMAN APPROVAL**
+
 Proceed only after:
 
-- RQ2 flag indicates whether to use `awareness_mean`  
-- RQ4 human interpretation specifies factor structure or item-wise approach  
+- RQ2 flag indicates whether to use `awareness_mean` or separate awareness items
+- RQ4 human interpretation specifies factor structure (2-factor, 1-factor, or item-wise approach)
 
-### 7.2 Example exploratory models
+### 7.2 Exploratory models
 
-- PPOM:  
-  - awareness + decision factors/indices + covariates  
-  - interaction terms (awareness × political affiliation)  
+**MANDATORY WORKFLOW:** Follow Section 2.1 (POM→PPOM) for all models.
+
+**Example model specifications:**
+
+1. **Awareness + Decision Factors** (no interactions)
+   ```r
+   model_additive <- fit_pom(
+     formula = support.nuclear.strike.on.russia_numeric ~
+               awareness_predictor + decision_factor_predictors +
+               age + sex + ethnicity + political.affiliation + income,
+     data = integration_data
+   )
+   ```
+
+2. **With interaction terms**
+   ```r
+   model_interaction <- fit_pom(
+     formula = support.nuclear.strike.on.russia_numeric ~
+               awareness_predictor * political.affiliation +
+               decision_factor_predictors +
+               age + sex + ethnicity + income,
+     data = integration_data
+   )
+   ```
+
+**For each model, execute:**
+
+1. Calculate residuals: `calculate_pom_residuals()`
+2. Generate diagnostic plots: `plot_pom_diagnostics()`
+3. Generate forest plots: `plot_pom_coefficients()`
+4. Run Brant test: `perform_brant_test()`
+5. If PO assumption violated, fit PPOM and compare predictions
+
+**Model comparison:**
+
+- Compare AIC/BIC across models
+- Assess improvement from interaction terms
+- Document final model selection
 
 ### 7.3 Outputs
 
-- Markdown: `RQ5_integration.md`  
-- Supporting CSV(s)
+**Required files (2 total):**
+
+**1. Markdown file:** `RQ5_integration.md`
+
+Contains:
+- Overview and conditional logic applied (awareness and decision factor approach used)
+- Model specifications and justifications
+- Full coefficient tables for all fitted models
+- Residual statistics for each model
+- Brant test results
+- PPOM results if fitted, including Δp_max
+- Model comparison table (AIC, BIC)
+- Final model selection and interpretation
+- Reference to diagnostic PDF
+
+**2. PDF file:** `RQ5_integration_diagnostics.pdf`
+
+Page structure (3 pages per model):
+- **Pages 1-3: First Model**
+  - Page 1: Coefficient table
+  - Page 2: Forest plot
+  - Page 3: 4-panel diagnostic plots
+- **Pages 4-6: Second Model** (if applicable)
+  - Page 4: Coefficient table
+  - Page 5: Forest plot
+  - Page 6: 4-panel diagnostic plots
+- **Additional pages if PPOM fitted for any model** (following same 3-page structure per model)
 
 ---
 

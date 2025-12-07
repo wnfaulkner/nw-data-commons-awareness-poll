@@ -422,17 +422,17 @@ cat("===========================================================================
 cat("Starting RQ1: Structure of Nuclear-Winter Awareness...\n")
 source("analysis/RQ1_awareness_structure.R")
 
-# RQ2: Awareness as Associational Predictor (uncomment when ready)
-# cat("Starting RQ2: Awareness as Associational Predictor...\n")
-# source("analysis/RQ2_awareness_support.R")
+# RQ2: Awareness as Associational Predictor
+cat("Starting RQ2: Awareness as Associational Predictor...\n")
+source("analysis/RQ2_awareness_support.R")
 
-# RQ3: Treatment Effects (uncomment when ready)
-# cat("Starting RQ3: Treatment Effects...\n")
-# source("analysis/RQ3_treatment_effects.R")
+# RQ3: Treatment Effects
+cat("Starting RQ3: Treatment Effects...\n")
+source("analysis/RQ3_treatment_effects.R")
 
-# RQ4: Decision Factors Structure (uncomment when ready)
-# cat("Starting RQ4: Decision Factors Structure...\n")
-# source("analysis/RQ4_decision_factors_structure.R")
+# RQ4: Decision Factors Structure
+cat("Starting RQ4: Decision Factors Structure...\n")
+source("analysis/RQ4_decision_factors_structure.R")
 
 # RQ5: Integration & Exploratory (uncomment when ready)
 # cat("Starting RQ5: Integration & Exploratory...\n")

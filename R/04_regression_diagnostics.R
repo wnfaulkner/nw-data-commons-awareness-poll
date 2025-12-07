@@ -45,49 +45,68 @@ calculate_vif <- function(model) {
   return(vif_results)
 }
 
-# BRANT TEST FOR PROPORTIONAL ODDS ASSUMPTION
+# TEST FOR PROPORTIONAL ODDS ASSUMPTION USING NOMINAL_TEST
 perform_brant_test <- function(pom_model, verbose = TRUE) {
-  # Load brant package
-  if (!requireNamespace("brant", quietly = TRUE)) {
-    stop("Package 'brant' is required for Brant test. Please install it with: install.packages('brant')")
+  # Load required packages
+  if (!requireNamespace("ordinal", quietly = TRUE)) {
+    stop("Package 'ordinal' is required for proportional odds testing. Please install it with: install.packages('ordinal')")
   }
 
-  # Load the package into the namespace
-  library(brant)
+  library(ordinal)
 
   if (verbose) {
-    cat("  Running Brant test for proportional odds assumption...\n")
+    cat("  Testing proportional odds assumption (nominal_test)...\n")
   }
 
-  # Run Brant test
-  brant_result <- tryCatch({
-    brant(pom_model)
+  # Extract data and formula from polr model
+  model_data <- pom_model$model
+
+  # Get outcome variable name from model (first column)
+  outcome_col <- names(model_data)[1]
+  predictor_cols <- names(model_data)[-1]
+
+  # Reconstruct formula using actual column names from model data
+  # This handles cases where outcome is wrapped in functions like ordered()
+  formula_str <- paste("`", outcome_col, "` ~ ", paste("`", predictor_cols, "`", sep = "", collapse = " + "), sep = "")
+  formula_obj <- as.formula(formula_str)
+
+  # Refit as clm model (ordinal package) for nominal_test
+  clm_model <- tryCatch({
+    ordinal::clm(formula_obj, data = model_data, link = "logit")
   }, error = function(e) {
-    cat("\nDetailed error information:\n")
-    cat("Error message:", e$message, "\n")
-    cat("Model class:", class(pom_model), "\n")
-    cat("Model method:", pom_model$method, "\n")
-    stop(paste("Brant test failed:", e$message))
+    stop(paste("Failed to refit model as clm:", e$message))
+  })
+
+  # Run nominal_test
+  nom_test_result <- tryCatch({
+    ordinal::nominal_test(clm_model)
+  }, error = function(e) {
+    stop(paste("nominal_test failed:", e$message))
   })
 
   if (verbose) {
-    cat("  Brant test completed. Processing results...\n")
+    cat("  Proportional odds test completed. Processing results...\n")
   }
 
-  # Extract results
-  # The brant test returns a matrix with columns: X2, df, probability
-  # Rows include: Omnibus test + individual predictor tests
-  test_stats <- tryCatch({
-    as.data.frame(brant_result, stringsAsFactors = FALSE)
-  }, error = function(e) {
-    cat("Error details:\n")
-    cat("  brant_result class:", class(brant_result), "\n")
-    cat("  brant_result type:", typeof(brant_result), "\n")
-    stop(paste("Failed to convert brant result to data frame:", e$message))
-  })
+  # Extract results from nominal_test
+  # nominal_test returns an anova object with rows for each predictor
+  # First row is "<none>" (base model), subsequent rows are predictors
 
-  # Rename columns for clarity (avoid name conflict with df() function)
-  colnames(test_stats) <- c("chi_squared", "degrees_of_freedom", "p_value")
+  # Remove <none> row (which has NA p-value)
+  test_results <- nom_test_result[rownames(nom_test_result) != "<none>", , drop = FALSE]
+
+  # Create test statistics dataframe in Brant-like format
+  test_stats <- data.frame(
+    variable = rownames(test_results),
+    chi_squared = test_results$LRT,
+    degrees_of_freedom = test_results$Df,
+    p_value = test_results$`Pr(>Chi)`,
+    row.names = NULL,
+    stringsAsFactors = FALSE
+  )
+
+  # Filter out any remaining NA p-values
+  test_stats <- test_stats[!is.na(test_stats$p_value), , drop = FALSE]
 
   # Add interpretation column
   test_stats$interpretation <- ifelse(
@@ -96,46 +115,68 @@ perform_brant_test <- function(pom_model, verbose = TRUE) {
     "OK: Proportional odds assumption holds"
   )
 
-  # Create summary
-  # Note: rownames should have "Omnibus" (capital O) based on brant output
-  omnibus_row <- which(rownames(test_stats) == "Omnibus")
-  if (length(omnibus_row) == 0) {
-    # Try lowercase if uppercase not found
-    omnibus_row <- which(tolower(rownames(test_stats)) == "omnibus")
+  # Create omnibus test using minimum p-value (conservative approach)
+  # This represents the strongest evidence against proportional odds
+  if (nrow(test_stats) > 0) {
+    omnibus_p_value <- min(test_stats$p_value, na.rm = TRUE)
+    omnibus_lrt <- sum(test_stats$chi_squared, na.rm = TRUE)
+    omnibus_df <- sum(test_stats$degrees_of_freedom, na.rm = TRUE)
+  } else {
+    # No valid tests - assume proportional odds holds
+    omnibus_p_value <- 1.0
+    omnibus_lrt <- 0
+    omnibus_df <- 0
   }
 
+  # Create omnibus row
+  omnibus_stats <- data.frame(
+    variable = "Omnibus",
+    chi_squared = omnibus_lrt,
+    degrees_of_freedom = omnibus_df,
+    p_value = omnibus_p_value,
+    interpretation = ifelse(
+      omnibus_p_value < 0.05,
+      "VIOLATION: Proportional odds assumption violated",
+      "OK: Proportional odds assumption holds"
+    ),
+    stringsAsFactors = FALSE
+  )
+
+  # Combine omnibus and individual tests
+  all_stats <- rbind(omnibus_stats, test_stats)
+  rownames(all_stats) <- c("Omnibus", test_stats$variable)
+
   summary_result <- list(
-    test_statistics = test_stats,
-    omnibus_statistic = test_stats[omnibus_row, "chi_squared"],
-    omnibus_df = test_stats[omnibus_row, "degrees_of_freedom"],
-    omnibus_p_value = test_stats[omnibus_row, "p_value"],
+    test_statistics = all_stats,
+    omnibus_statistic = omnibus_lrt,
+    omnibus_df = omnibus_df,
+    omnibus_p_value = omnibus_p_value,
     omnibus_interpretation = ifelse(
-      test_stats[omnibus_row, "p_value"] < 0.05,
+      omnibus_p_value < 0.05,
       "VIOLATION: Overall proportional odds assumption violated",
       "OK: Overall proportional odds assumption holds"
     ),
-    violations = test_stats[test_stats$p_value < 0.05 & seq_len(nrow(test_stats)) != omnibus_row, , drop = FALSE],
-    has_violations = any(test_stats$p_value[seq_len(nrow(test_stats)) != omnibus_row] < 0.05)
+    violations = test_stats[test_stats$p_value < 0.05, , drop = FALSE],
+    has_violations = any(test_stats$p_value < 0.05, na.rm = TRUE)
   )
 
   if (verbose) {
-    cat("\n  Brant Test Results:\n")
-    cat("  ==================\n\n")
-    cat("  Omnibus Test:\n")
-    cat("    Chi-squared =", round(summary_result$omnibus_statistic, 4), "\n")
+    cat("\n  Proportional Odds Test Results (Likelihood Ratio Test):\n")
+    cat("  ========================================================\n\n")
+    cat("  Omnibus Test (minimum p-value across predictors):\n")
+    cat("    LR Chi-squared =", round(summary_result$omnibus_statistic, 4), "\n")
     cat("    df =", summary_result$omnibus_df, "\n")
     cat("    p-value =", format.pval(summary_result$omnibus_p_value, digits = 4), "\n")
     cat("    Result:", summary_result$omnibus_interpretation, "\n\n")
 
     cat("  Individual Variable Tests:\n")
-    individual_tests <- test_stats[seq_len(nrow(test_stats)) != omnibus_row, , drop = FALSE]
-    for (i in seq_len(nrow(individual_tests))) {
-      var_name <- rownames(individual_tests)[i]
+    for (i in seq_len(nrow(test_stats))) {
+      var_name <- test_stats$variable[i]
       cat("    ", var_name, ":\n", sep = "")
-      cat("      Chi-squared =", round(individual_tests[i, "chi_squared"], 4), "\n")
-      cat("      df =", individual_tests[i, "degrees_of_freedom"], "\n")
-      cat("      p-value =", format.pval(individual_tests[i, "p_value"], digits = 4), "\n")
-      cat("      Result:", individual_tests[i, "interpretation"], "\n")
+      cat("      LR Chi-squared =", round(test_stats$chi_squared[i], 4), "\n")
+      cat("      df =", test_stats$degrees_of_freedom[i], "\n")
+      cat("      p-value =", format.pval(test_stats$p_value[i], digits = 4), "\n")
+      cat("      Result:", test_stats$interpretation[i], "\n")
     }
     cat("\n")
 
