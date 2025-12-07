@@ -939,6 +939,48 @@ sankey_data <- data.tb %>%
 # Calculate total number of respondents
 total_n <- sum(sankey_data$freq)
 
+# Define color palette for awareness levels
+awareness_colors <- c(
+  "4. know a lot" = "#313695",        # Darkest blue
+  "3. know something" = "#4575b4",   # Medium blue
+  "2. heard a little" = "#91bfdb",   # Light blue
+  "1. never heard" = "#e0f3f8"       # Lightest blue
+)
+
+# Function to blend two hex colors (average RGB values)
+blend_colors <- function(col1, col2) {
+  if (col1 == col2) return(col1)
+  rgb1 <- col2rgb(col1)
+  rgb2 <- col2rgb(col2)
+  rgb_avg <- (rgb1 + rgb2) / 2
+  return(rgb(rgb_avg[1], rgb_avg[2], rgb_avg[3], maxColorValue = 255))
+}
+
+# Function to get flow color based on connected awareness levels
+get_flow_color <- function(level1, level2, level3) {
+  col1 <- awareness_colors[as.character(level1)]
+  col2 <- awareness_colors[as.character(level2)]
+  col3 <- awareness_colors[as.character(level3)]
+
+  # If all three are the same, use that color
+  if (level1 == level2 && level2 == level3) {
+    return(col1)
+  }
+
+  # Otherwise, blend colors progressively (average axis1->axis2, then average with axis3)
+  blend_12 <- blend_colors(col1, col2)
+  blend_all <- blend_colors(blend_12, col3)
+  return(blend_all)
+}
+
+# Add flow color column to sankey_data
+sankey_data <- sankey_data %>%
+  rowwise() %>%
+  mutate(
+    flow_color = get_flow_color(nw.awareness.1980s, nw.awareness.recent.academic, nw.awareness.recent.media)
+  ) %>%
+  ungroup()
+
 # Create Sankey/alluvial diagram
 awareness_sankey <- ggplot(
   sankey_data,
@@ -949,16 +991,17 @@ awareness_sankey <- ggplot(
     axis3 = nw.awareness.recent.media
   )
 ) +
-  # Add flows (alluvium) - single grey color
+  # Add flows (alluvium) - colored based on connected awareness levels
   geom_alluvium(
-    fill = "grey60",
+    aes(fill = flow_color),
     width = 1/6,
     alpha = 0.7,
     curve_type = "cubic"
   ) +
   # Add stacked bars (strata) - colored by awareness level
   geom_stratum(
-    aes(fill = after_stat(stratum)),
+    aes(fill = c("4. know a lot" = "#313695", "3. know something" = "#4575b4",
+                 "2. heard a little" = "#91bfdb", "1. never heard" = "#e0f3f8")[after_stat(stratum)]),
     width = 1/6,
     color = "grey30",
     size = 0.3
@@ -968,19 +1011,11 @@ awareness_sankey <- ggplot(
     stat = "stratum",
     aes(label = paste0(after_stat(stratum), "\n(",
                        round(after_stat(count) / total_n * 100, 1), "%)")),
-    size = 5,
+    size = 4,
     fontface = "bold"
   ) +
-  # Color scheme: light to dark as awareness increases (reversed order)
-  scale_fill_manual(
-    name = "Awareness Level",
-    values = c(
-      "4. know a lot" = "#313695",        # Darkest blue (on top)
-      "3. know something" = "#4575b4",   # Medium blue
-      "2. heard a little" = "#91bfdb",   # Light blue
-      "1. never heard" = "#e0f3f8"       # Lightest blue (on bottom)
-    )
-  ) +
+  # Use identity scale to apply exact colors
+  scale_fill_identity() +
   # Axis labels - reduced expand to bring labels closer
   scale_x_discrete(
     limits = c("1980s", "Recent\nAcademic", "Recent\nMedia"),
