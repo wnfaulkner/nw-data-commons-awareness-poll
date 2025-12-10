@@ -44,7 +44,9 @@ rq3_data <- data.tb %>%
     age,
     sex,
     ethnicity,
+    ethnicity.collapsed,
     political.affiliation,
+    political.affiliation.collapsed,
     employment.status,
     student.status,
     country.of.residence
@@ -84,8 +86,10 @@ cat("\n")
 
 cat("5.3 Fitting ordinal models and testing assumptions...\n\n")
 
-# Covariates for adjusted models
-covariates <- c("age", "sex", "ethnicity", "political.affiliation",
+# Covariates for adjusted models (using collapsed categorical variables)
+# Note: Using collapsed versions (ethnicity.collapsed, political.affiliation.collapsed)
+# to improve model convergence and coefficient stability
+covariates <- c("age", "sex", "ethnicity.collapsed", "political.affiliation.collapsed",
                 "employment.status", "student.status")
 
 # Model 1: Unadjusted POM
@@ -210,8 +214,8 @@ representative_profile <- rq3_data %>%
   summarise(
     age = median(age, na.rm = TRUE),
     sex = names(sort(table(sex), decreasing = TRUE))[1],
-    ethnicity = names(sort(table(ethnicity), decreasing = TRUE))[1],
-    political.affiliation = names(sort(table(political.affiliation), decreasing = TRUE))[1],
+    ethnicity.collapsed = names(sort(table(ethnicity.collapsed), decreasing = TRUE))[1],
+    political.affiliation.collapsed = names(sort(table(political.affiliation.collapsed), decreasing = TRUE))[1],
     employment.status = names(sort(table(employment.status), decreasing = TRUE))[1],
     student.status = names(sort(table(student.status), decreasing = TRUE))[1]
   )

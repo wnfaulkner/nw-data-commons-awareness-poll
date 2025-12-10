@@ -1,0 +1,552 @@
+         used (Mb) gc trigger (Mb) max used (Mb)
+Ncells 300497 16.1     707777 37.8   493115 26.4
+Vcells 521934  4.0    8388608 64.0  1973969 15.1
+
+Attaching package: ‘lubridate’
+
+The following objects are masked from ‘package:data.table’:
+
+    hour, isoweek, mday, minute, month, quarter, second, wday, week,
+    yday, year
+
+The following objects are masked from ‘package:base’:
+
+    date, intersect, setdiff, union
+
+
+Attaching package: ‘reshape2’
+
+The following objects are masked from ‘package:data.table’:
+
+    dcast, melt
+
+
+Attaching package: ‘tictoc’
+
+The following object is masked from ‘package:data.table’:
+
+    shift
+
+── [1mAttaching core tidyverse packages[22m ──────────────────────── tidyverse 2.0.0 ──
+[32m✔[39m [34mdplyr  [39m 1.1.4     [32m✔[39m [34mreadr  [39m 2.1.5
+[32m✔[39m [34mforcats[39m 1.0.1     [32m✔[39m [34mtibble [39m 3.3.0
+[32m✔[39m [34mpurrr  [39m 1.1.0     [32m✔[39m [34mtidyr  [39m 1.3.1
+── [1mConflicts[22m ────────────────────────────────────────── tidyverse_conflicts() ──
+[31m✖[39m [34mdplyr[39m::[32mbetween()[39m     masks [34mdata.table[39m::between()
+[31m✖[39m [34mtidyr[39m::[32mextract()[39m     masks [34mmagrittr[39m::extract()
+[31m✖[39m [34mdplyr[39m::[32mfilter()[39m      masks [34mstats[39m::filter()
+[31m✖[39m [34mdplyr[39m::[32mfirst()[39m       masks [34mdata.table[39m::first()
+[31m✖[39m [34mlubridate[39m::[32mhour()[39m    masks [34mdata.table[39m::hour()
+[31m✖[39m [34mlubridate[39m::[32misoweek()[39m masks [34mdata.table[39m::isoweek()
+[31m✖[39m [34mdplyr[39m::[32mlag()[39m         masks [34mstats[39m::lag()
+[31m✖[39m [34mdplyr[39m::[32mlast()[39m        masks [34mdata.table[39m::last()
+[31m✖[39m [34mlubridate[39m::[32mmday()[39m    masks [34mdata.table[39m::mday()
+[31m✖[39m [34mlubridate[39m::[32mminute()[39m  masks [34mdata.table[39m::minute()
+[31m✖[39m [34mlubridate[39m::[32mmonth()[39m   masks [34mdata.table[39m::month()
+[31m✖[39m [34mlubridate[39m::[32mquarter()[39m masks [34mdata.table[39m::quarter()
+[31m✖[39m [34mlubridate[39m::[32msecond()[39m  masks [34mdata.table[39m::second()
+[31m✖[39m [34mpurrr[39m::[32mset_names()[39m   masks [34mmagrittr[39m::set_names()
+[31m✖[39m [34mpurrr[39m::[32mtranspose()[39m   masks [34mdata.table[39m::transpose()
+[31m✖[39m [34mlubridate[39m::[32mwday()[39m    masks [34mdata.table[39m::wday()
+[31m✖[39m [34mlubridate[39m::[32mweek()[39m    masks [34mdata.table[39m::week()
+[31m✖[39m [34mlubridate[39m::[32myday()[39m    masks [34mdata.table[39m::yday()
+[31m✖[39m [34mlubridate[39m::[32myear()[39m    masks [34mdata.table[39m::year()
+[36mℹ[39m Use the conflicted package ([3m[34m<http://conflicted.r-lib.org/>[39m[23m) to force all conflicts to become errors
+
+Attaching package: ‘googledrive’
+
+The following objects are masked from ‘package:googlesheets4’:
+
+    request_generate, request_make
+
+
+Attaching package: ‘janitor’
+
+The following objects are masked from ‘package:stats’:
+
+    chisq.test, fisher.test
+
+
+Attaching package: ‘openxlsx2’
+
+The following object is masked from ‘package:readxl’:
+
+    read_xlsx
+
+Configuration loaded successfully.
+Validation functions loaded successfully.
+Data processing functions loaded successfully.
+Regression core functions loaded successfully.
+Regression diagnostics functions loaded successfully.
+Plotting functions loaded successfully.
+PDF export functions loaded successfully.
+Orchestration functions loaded successfully.
+Time difference of 1.954867 secs
+[32m✔[39m Reading from [36mNW Awareness Data & Configs[39m.
+[32m✔[39m Range '[33m'data'[39m'.
+[32m✔[39m Reading from [36mNW Awareness Data & Configs[39m.
+[32m✔[39m Range '[33m'questions'[39m'.
+[32m✔[39m Reading from [36mNW Awareness Data & Configs[39m.
+[32m✔[39m Range '[33m'response.options'[39m'.
+[32m✔[39m Reading from [36mNW Awareness Data & Configs[39m.
+[32m✔[39m Range '[33m'bivariate.tests'[39m'.
+[32m✔[39m Reading from [36mNW Awareness Data & Configs[39m.
+[32m✔[39m Range '[33m'regression.configs'[39m'.
+[32m✔[39m Reading from [36mNW Awareness Data & Configs[39m.
+[32m✔[39m Range '[33m'regression.types'[39m'.
+[1] "1: data.tb"
+[1] "2: questions.tb"
+[1] "3: response.options.tb"
+[1] "4: bivariate.tests.tb"
+[1] "5: regression.configs.tb"
+[1] "6: regression.types.tb"
+
+Validating Google Sheets data...
+  ✓ data.tb: 3000 rows
+  ✓ questions.tb: 40 rows, all required columns present
+  ✓ response.options.tb: 22 rows
+  ✓ regression.configs.tb: 10 models defined
+Data validation complete!
+
+[1] TRUE
+[1] "Values replaced: 26"
+[1] "Values not replaced: "
+Creating collapsed categorical variables for regression models...
+  ✓ political.affiliation.collapsed (11 → 4 levels)
+  ✓ ethnicity.collapsed (5 → 3 levels)
+
+
+===============================================================================
+DATA PREPARATION COMPLETE
+===============================================================================
+
+The following data objects are now available:
+
+  data.tb              - Wide format data (3000rows)
+  awareness.tb         - Long format awareness (4458rows)
+  casualty.causes.tb   - Long format casualty estimates (4449rows)
+  support.reaction.tb  - Long format policy support (15000rows)
+  decision.factors.tb  - Long format decision factors (15000rows)
+  questions.tb         - Question metadata (40rows)
+  export.ls            - List of all tables for export
+
+Total preparation time: 20.19 secs 
+
+===============================================================================
+
+===============================================================================
+RUNNING RESEARCH QUESTION ANALYSES
+===============================================================================
+
+Starting RQ1: Structure of Nuclear-Winter Awareness...
+
+Attaching package: ‘psych’
+
+The following objects are masked from ‘package:ggplot2’:
+
+    %+%, alpha
+
+
+===============================================================================
+RQ1: STRUCTURE OF NUCLEAR-WINTER AWARENESS
+===============================================================================
+
+Output directory: outputs/2025-12-09 20.31.50.750690/RQ1_awareness_structure 
+
+3.1 Constructing input data...
+  Sample size (treatment group with awareness data): 1485 
+  Variables: 1980s awareness, recent academic awareness, recent media awareness
+
+3.2 Computing diagnostics...
+  Computing Cronbach's alpha...
+    Raw alpha: 0.699 
+    Standardized alpha: 0.699 
+  Computing Pearson correlations...
+  Computing polychoric correlations...
+  Diagnostics complete.
+
+3.3 Conducting factor analysis...
+  Factor analysis complete.
+    Variance explained: 56.7 %
+    Loadings:
+      1980s awareness: 0.523 
+      Recent academic: 0.722 
+      Recent media: 0.952 
+
+3.4 Creating awareness mean index...
+  Awareness mean index created.
+    Mean (raw scale): 2.868 
+    SD (raw scale): 0.733 
+    Range: 1 to 4 
+
+3.5 Generating markdown report...
+  ✓ RQ1_awareness_structure.md
+  (Note: CSV outputs disabled - data retained in R environment)
+
+===============================================================================
+RQ1 ANALYSIS COMPLETE
+===============================================================================
+
+Results summary:
+  - Internal consistency (α): 0.699 
+  - Variance explained (1-factor): 56.7 %
+  - Awareness mean index: created for 1485 respondents
+
+Output location: outputs/2025-12-09 20.31.50.750690/RQ1_awareness_structure 
+
+Next step: Review RQ1_awareness_structure.md, then proceed to RQ2.
+===============================================================================
+
+Note: rq1_awareness_mean is now available in the global environment for RQ2.
+
+Starting RQ2: Awareness as Associational Predictor...
+
+===============================================================================
+RQ2: USING AWARENESS AS ASSOCIATIONAL PREDICTOR
+===============================================================================
+
+Output directory: outputs/2025-12-09 20.31.50.750690/RQ2_awareness_support 
+
+4.1 Assembling data (treatment group only)...
+  Sample size (complete cases): 1066 
+  Outcome: Support for nuclear strike on Russia (1-5 scale)
+  Treatment group only (shown infographic)
+
+4.2 Checking distribution and monotonicity...
+  Awareness mean distribution:
+    Mean: 2.869 
+    SD: 0.733 
+    Range: 1 to 4 
+
+  Support by awareness quartile:
+[38;5;246m# A tibble: 4 × 4[39m
+  awareness_quartile     n mean_support sd_support
+  [3m[38;5;246m<fct>[39m[23m              [3m[38;5;246m<int>[39m[23m        [3m[38;5;246m<dbl>[39m[23m      [3m[38;5;246m<dbl>[39m[23m
+[38;5;250m1[39m Q1 (Low)             341         2.13       1.25
+[38;5;250m2[39m Q2                   303         1.98       1.10
+[38;5;250m3[39m Q3                   195         2.15       1.25
+[38;5;250m4[39m Q4 (High)            227         2.18       1.18
+
+4.3 Comparing item-wise vs mean index models...
+  Fitting Model 1 (separate items)...
+    Model 1 AIC: 2951.06 
+  Fitting Model 2 (mean index)...
+    Model 2 AIC: 2966.84 
+
+4.3a Testing proportional odds assumption...
+  Testing Model 1 (separate items)...
+
+Attaching package: ‘ordinal’
+
+The following object is masked from ‘package:dplyr’:
+
+    slice
+
+  Testing proportional odds assumption (nominal_test)...
+  Proportional odds test completed. Processing results...
+
+  DEBUG: Raw nominal_test output:
+Tests of nominal effects
+
+formula: support.nuclear.strike.on.russia_numeric ~ nw.awareness.1980s_numeric + nw.awareness.recent.academic_numeric + nw.awareness.recent.media_numeric + age + sex + ethnicity.collapsed + political.affiliation.collapsed + employment.status + student.status
+                                     Df  logLik    AIC LRT Pr(>Chi)
+<none>                                  -1454.5 2951.1             
+nw.awareness.1980s_numeric                                         
+nw.awareness.recent.academic_numeric                               
+nw.awareness.recent.media_numeric                                  
+age                                                                
+sex                                                                
+ethnicity.collapsed                                                
+political.affiliation.collapsed                                    
+employment.status                                                  
+student.status                                                     
+
+  DEBUG: Row names:
+ [1] "<none>"                              
+ [2] "nw.awareness.1980s_numeric"          
+ [3] "nw.awareness.recent.academic_numeric"
+ [4] "nw.awareness.recent.media_numeric"   
+ [5] "age"                                 
+ [6] "sex"                                 
+ [7] "ethnicity.collapsed"                 
+ [8] "political.affiliation.collapsed"     
+ [9] "employment.status"                   
+[10] "student.status"                      
+
+  DEBUG: Column names:
+[1] "Df"       "logLik"   "AIC"      "LRT"      "Pr(>Chi)"
+
+  DEBUG: Dimensions: 10 rows x 5 cols
+
+  DEBUG: After removing <none>: 9 rows
+
+  Proportional Odds Test Results (Likelihood Ratio Test):
+  ========================================================
+
+  Omnibus Test (minimum p-value across predictors):
+    LR Chi-squared = 0 
+    df = 0 
+    p-value = 1 
+    Result: OK: Overall proportional odds assumption holds 
+
+  Individual Variable Tests:
+
+  GOOD NEWS: Proportional odds assumption holds for all predictors.
+  The POM model is appropriate for this data.
+
+    Omnibus p-value: 1.0000 
+  Testing Model 2 (mean index)...
+  Testing proportional odds assumption (nominal_test)...
+  Proportional odds test completed. Processing results...
+
+  DEBUG: Raw nominal_test output:
+Tests of nominal effects
+
+formula: support.nuclear.strike.on.russia_numeric ~ awareness_mean + age + sex + ethnicity.collapsed + political.affiliation.collapsed + employment.status + student.status
+                                Df  logLik    AIC LRT Pr(>Chi)
+<none>                             -1464.4 2966.8             
+awareness_mean                                                
+age                                                           
+sex                                                           
+ethnicity.collapsed                                           
+political.affiliation.collapsed                               
+employment.status                                             
+student.status                                                
+
+  DEBUG: Row names:
+[1] "<none>"                          "awareness_mean"                 
+[3] "age"                             "sex"                            
+[5] "ethnicity.collapsed"             "political.affiliation.collapsed"
+[7] "employment.status"               "student.status"                 
+
+  DEBUG: Column names:
+[1] "Df"       "logLik"   "AIC"      "LRT"      "Pr(>Chi)"
+
+  DEBUG: Dimensions: 8 rows x 5 cols
+
+  DEBUG: After removing <none>: 7 rows
+
+  Proportional Odds Test Results (Likelihood Ratio Test):
+  ========================================================
+
+  Omnibus Test (minimum p-value across predictors):
+    LR Chi-squared = 0 
+    df = 0 
+    p-value = 1 
+    Result: OK: Overall proportional odds assumption holds 
+
+  Individual Variable Tests:
+
+  GOOD NEWS: Proportional odds assumption holds for all predictors.
+  The POM model is appropriate for this data.
+
+    Omnibus p-value: 1.0000 
+
+4.3b Model 1: PO assumption holds (Brant p > 0.05)
+  Retaining POM model.
+
+4.3b Model 2: PO assumption holds (Brant p > 0.05)
+  Retaining POM model.
+
+4.3c Comparing final Model 1 vs Model 2...
+  Δp_max (Model 1 final vs Model 2 final): 0.0227 
+  Threshold for using mean index: 0.03
+  Decision: USE mean index 
+
+4.3d Computing model diagnostics...
+  POM diagnostics for Model 1...
+
+Attaching package: ‘gridExtra’
+
+The following object is masked from ‘package:dplyr’:
+
+    combine
+
+[1m[22m`geom_smooth()` using formula = 'y ~ x'
+[1m[22m`geom_smooth()` using formula = 'y ~ x'
+  POM diagnostics for Model 2...
+[1m[22m`geom_smooth()` using formula = 'y ~ x'
+[1m[22m`geom_smooth()` using formula = 'y ~ x'
+  Diagnostics completed.
+
+4.3e Generating comprehensive PDF report...
+  ✓ RQ2_POM_diagnostics.pdf (6 pages: 3 per model)
+
+4.4 Creating final decision flag...
+  Cronbach's alpha: 0.699 (threshold: 0.70)
+  Delta_p_max (cross-model): 0.0227 (threshold: 0.03)
+  --> Final decision: awareness_mean is NOT APPROVED for downstream use
+
+4.5a Generating model comparison archive (saved to main outputs/ directory)...
+  ✓ outputs/RQ2_model_comparison_items_vs_mean.md
+
+4.5b Generating primary markdown report (key predictors only)...
+  ✓ RQ2_awareness_support.md (key predictors only)
+
+===============================================================================
+RQ2 ANALYSIS COMPLETE
+===============================================================================
+
+Results summary:
+  - Sample size: 1066 
+  - Model 1 final type: POM 
+  - Model 2 final type: POM 
+  - Awareness mean → support OR: 1.09 (p = 0.2966 )
+  - Delta_p_max (cross-model): 0.0227 
+  - Awareness mean approved for downstream use: NO 
+
+Output files:
+  - RQ2_awareness_support.md (primary report - key predictors only)
+  - RQ2_POM_diagnostics.pdf (diagnostic report - full coefficients)
+  - outputs/RQ2_model_comparison_items_vs_mean.md (archival comparison)
+    NOTE: PDF currently shows POM models only. PPOM pages not yet implemented.
+
+Output location: outputs/2025-12-09 20.31.50.750690/RQ2_awareness_support 
+
+Note: rq2_awareness_mean_ok_overall flag is now available for RQ5.
+===============================================================================
+
+There were 34 warnings (use warnings() to see them)
+Starting RQ3: Treatment Effects...
+
+===============================================================================
+RQ3: TREATMENT EFFECT OF NUCLEAR-WINTER INFORMATION
+===============================================================================
+
+Output directory: outputs/2025-12-09 20.31.50.750690/RQ3_treatment_effects 
+
+5.1 Constructing dataset...
+  Total sample: 2213 
+    Treatment (shown infographic): 1066 
+    Control (no infographic): 1147 
+
+5.2 Computing unadjusted descriptive effects...
+  Unadjusted means:
+[38;5;246m# A tibble: 2 × 5[39m
+  shown.infographic         n mean_support sd_support prop_high_support
+  [3m[38;5;246m<chr>[39m[23m                 [3m[38;5;246m<int>[39m[23m        [3m[38;5;246m<dbl>[39m[23m      [3m[38;5;246m<dbl>[39m[23m             [3m[38;5;246m<dbl>[39m[23m
+[38;5;250m1[39m No Infographic         [4m1[24m147         2.18       1.26             0.215
+[38;5;250m2[39m Shown NW Iinfographic  [4m1[24m066         2.10       1.19             0.174
+
+5.3 Fitting ordinal models and testing assumptions...
+
+  Model 1: Unadjusted POM...
+    AIC: 6180.15 
+    Treatment effect (log odds): -0.082 
+    Treatment effect (OR): 0.921 (95% CI: 0.792 - 1.072 )
+    p-value: 0.2905 
+
+  Model 2: Adjusted POM...
+    AIC: 6177.23 
+    Treatment effect (log odds): -0.075 
+    Treatment effect (OR): 0.928 (95% CI: 0.796 - 1.081 )
+    p-value: 0.3345 
+
+  Testing proportional odds assumption...
+    Overall Brant test p-value: 1.0000 
+    Decision: PO assumption HOLDS - use POM 
+
+  PO assumption holds. Using adjusted POM for predictions.
+
+5.4 Computing predicted probabilities...
+  Predicted probabilities (representative profile):
+      group     shown.infographic prob_level_1 prob_level_2 prob_level_3
+1 Treatment Shown NW Iinfographic    0.4477981    0.2791441    0.1036637
+2   Control        No Infographic    0.4292992    0.2824765    0.1079940
+  prob_level_4 prob_level_5
+1    0.1313161   0.03807784
+2    0.1393026   0.04092763
+
+  Probability of high support (≥4):
+    Treatment: 0.169 
+    Control: 0.18 
+    Difference: -0.011 
+
+5.5 Generating markdown report...
+  ✓ RQ3_treatment_effects.md
+
+===============================================================================
+RQ3 ANALYSIS COMPLETE
+===============================================================================
+
+Results summary:
+  - Sample size: 2213 
+  - Treatment effect (adjusted OR): 0.928 (p = 0.3345 )
+  - PO assumption: HOLDS 
+  - Final model: POM (adjusted) 
+
+Output location: outputs/2025-12-09 20.31.50.750690/RQ3_treatment_effects 
+
+===============================================================================
+
+Starting RQ4: Decision Factors Structure...
+
+===============================================================================
+RQ4: DECISION FACTORS STRUCTURE VIA EFA
+===============================================================================
+
+Output directory: outputs/2025-12-09 20.31.50.750690/RQ4_decision_factors_structure 
+
+6.1 Constructing decision factor items...
+  Sample size (with at least one decision factor response): 2988 
+
+  Complete cases (all 5 items): 2988 
+
+6.2 Computing descriptive profiles...
+  Decision factor means by support level:
+[38;5;246m# A tibble: 5 × 7[39m
+  support.nuclear.strike.…¹     n reduce_retaliation punish_signal limit_support
+                      [3m[38;5;246m<dbl>[39m[23m [3m[38;5;246m<int>[39m[23m              [3m[38;5;246m<dbl>[39m[23m         [3m[38;5;246m<dbl>[39m[23m         [3m[38;5;246m<dbl>[39m[23m
+[38;5;250m1[39m                         1  [4m1[24m222               3.25          3.10          3.61
+[38;5;250m2[39m                         2   839               3.46          3.45          3.80
+[38;5;250m3[39m                         3   346               3.48          3.42          3.64
+[38;5;250m4[39m                         4   446               3.76          3.88          3.91
+[38;5;250m5[39m                         5   135               4.16          4.31          3.85
+[38;5;246m# ℹ abbreviated name: ¹​support.nuclear.strike.on.russia_numeric[39m
+[38;5;246m# ℹ 2 more variables: avoid_famine <dbl>, avoid_escalation <dbl>[39m
+
+6.3 Conducting polychoric EFA...
+
+  Computing polychoric correlations...
+  Polychoric correlation matrix computed.
+
+  Fitting 1-factor model...
+    Variance explained: 34.3 %
+  Fitting 2-factor model...
+    Cumulative variance explained: 61.6 %
+  Fitting 3-factor model...
+    Cumulative variance explained: 62.3 %
+
+6.4 Extracting factor loadings...
+  Factor loadings extracted for all models.
+
+6.5 Generating markdown report...
+  ✓ RQ4_decision_factors_structure.md
+  (Note: CSV outputs disabled - data retained in R environment)
+
+===============================================================================
+RQ4 ANALYSIS COMPLETE
+===============================================================================
+
+Results summary:
+  - Sample size: 2988 
+  - 1-factor variance explained: 34.3 %
+  - 2-factor variance explained: 61.6 %
+  - 3-factor variance explained: 62.3 %
+
+Output location: outputs/2025-12-09 20.31.50.750690/RQ4_decision_factors_structure 
+
+IMPORTANT: Review RQ4_decision_factors_structure.md for factor interpretation.
+Do not create factor indices until human review is complete.
+===============================================================================
+
+
+===============================================================================
+ALL ANALYSES COMPLETE
+===============================================================================
+
+Total runtime: 25.51 secs 
+
+Results saved in timestamped output directory.
+===============================================================================
+

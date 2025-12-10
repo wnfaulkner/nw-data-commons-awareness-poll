@@ -131,4 +131,59 @@ ReshapeThemeTable <- function(theme, data_table, questions_table,
   return(long.tb)
 }
 
+# COLLAPSE CATEGORICAL VARIABLES FOR REGRESSION
+create_collapsed_categories <- function(data_tb) {
+  # Create collapsed versions of high-cardinality categorical variables
+  # for improved statistical properties and model convergence
+  #
+  # Rationale: Original fine-grained categories have small cell sizes
+  # leading to unstable coefficient estimates and nominal_test convergence issues
+  #
+  # Args:
+  #   data_tb: Data tibble with original categorical variables
+  #
+  # Returns:
+  #   Data tibble with additional collapsed variables
+
+  data_tb <- data_tb %>%
+    mutate(
+      # POLITICAL AFFILIATION: 11 levels → 4 levels
+      # Collapsed by ideological orientation and engagement
+      political.affiliation.collapsed = case_when(
+        political.affiliation %in% c("UK-Labour", "USA-Democrat", "UK-Green", "UK-SNP") ~
+          "Left-leaning",
+        political.affiliation %in% c("UK-Conservative", "USA-Republican") ~
+          "Right-leaning",
+        political.affiliation %in% c("USA-Independent", "UK-Independent",
+                                      "Don't Know", "Would not vote") ~
+          "Unaffiliated/Uncertain",
+        political.affiliation %in% c("Other", "UK-Plaid Cymru") ~
+          "Other",
+        TRUE ~ NA_character_
+      ),
+
+      # ETHNICITY: 5 levels → 3 levels
+      # White (reference), Black (separate), Asian & Other (combined)
+      ethnicity.collapsed = case_when(
+        ethnicity == "White" ~ "White",
+        ethnicity == "Black" ~ "Black",
+        ethnicity %in% c("Asian", "Mixed", "Other") ~ "Asian & Other",
+        TRUE ~ NA_character_
+      )
+    ) %>%
+    # Convert to factors with explicit reference levels
+    mutate(
+      political.affiliation.collapsed = factor(
+        political.affiliation.collapsed,
+        levels = c("Unaffiliated/Uncertain", "Left-leaning", "Right-leaning", "Other")
+      ),
+      ethnicity.collapsed = factor(
+        ethnicity.collapsed,
+        levels = c("White", "Black", "Asian & Other")
+      )
+    )
+
+  return(data_tb)
+}
+
 cat("Data processing functions loaded successfully.\n")

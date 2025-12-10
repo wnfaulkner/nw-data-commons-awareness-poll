@@ -231,6 +231,36 @@ brant_result <- tryCatch({
 
 Document any test failures in the markdown output.
 
+**KNOWN LIMITATION: ordinal::nominal_test() with categorical predictors**
+
+The `ordinal::nominal_test()` function may return NA values (manifesting as p=1.0) when models include multiple categorical predictors, even after collapsing high-cardinality variables. This occurs because `nominal_test()` attempts to fit very flexible models by adding nominal effects (separate coefficients) for each predictor at each outcome threshold, which can lead to:
+
+- Rank-deficient design matrices
+- Convergence issues in likelihood optimization
+- Insufficient degrees of freedom for the test
+
+**Mitigation strategy:**
+
+To reduce this issue, categorical variables with high cardinality have been collapsed:
+- `political.affiliation`: 11 levels → 4 levels (Left-leaning, Right-leaning, Unaffiliated/Uncertain, Other)
+- `ethnicity`: 5 levels → 3 levels (White, Black, Asian & Other)
+
+Reference: `create_collapsed_categories()` in `R/02_data_processing.R`
+
+**Conservative interpretation when test fails:**
+
+When `nominal_test()` returns NA for all predictors (p=1.0), the analysis pipeline treats this as "PO assumption holds" and defaults to the simpler POM model. This is a conservative approach:
+- If we cannot test the assumption, we use the more restrictive (proportional odds) model
+- The POM model is more parsimonious and easier to interpret
+- Results remain valid under the PO assumption even if it is mildly violated
+
+**Alternative approaches if needed:**
+
+1. Test PO assumption for continuous predictors only (age, awareness scores)
+2. Fit PPOM models based on theoretical considerations rather than statistical tests
+3. Use alternative PO tests (e.g., score test, Wald test) for specific predictors of interest
+4. Accept POM as the default model specification for complex categorical models
+
 #### 2.1.4 Model escalation: Partial Proportional Odds Model (PPOM)
 
 **WHEN REQUIRED:** If Brant test omnibus p-value ≤ 0.05
@@ -344,9 +374,160 @@ Each RQ section below references this workflow but does not repeat the full proc
 
 ---
 
-## 3. RQ1 – STRUCTURE OF NUCLEAR-WINTER AWARENESS
+## 3. MULTIPLE COMPARISON CORRECTIONS
 
-### 3.1 Input construction
+### 3.1 Rationale
+
+When conducting multiple statistical tests across related outcome variables and predictors, the probability of false positives (Type I errors) inflates. Multiple comparison correction methods control this inflation while preserving statistical power.
+
+This protocol adopts the **Benjamini-Hochberg False Discovery Rate (FDR)** correction, which is:
+- More powerful than Bonferroni correction (reduces Type II errors)
+- Appropriate for exploratory research with correlated outcome variables
+- Well-established in survey research with multiple related items
+
+### 3.2 Analysis families
+
+**Family definition:** A family consists of all statistical tests conducted on conceptually related outcome variables within a research domain.
+
+**Defined families for this project:**
+
+1. **Awareness Items** (RQ1, RQ2)
+   - Tests involving: `nw.awareness.1980s`, `nw.awareness.recent.academic`, `nw.awareness.recent.media`
+   - Includes: factor analysis, regressions predicting awareness items
+
+2. **Support Reactions** (RQ2, RQ3, RQ5)
+   - Tests involving: `support.nuclear.strike.on.russia` and related items
+   - Includes: treatment effects, awareness→support associations, exploratory models
+
+3. **Decision Factors** (RQ4, RQ5)
+   - Tests involving: `decision.reduce.russian.retaliation`, `decision.punish.russia.signal.aggressors`, `decision.limit.diplomatic.support.for.russia`, `decision.avoid.killing.civilians.global.famine`, `decision.avoid.escalation`
+   - Includes: EFA, regressions with decision factors as predictors or outcomes
+
+4. **Casualty Estimates** (if analyzed)
+   - Tests involving casualty estimation variables
+   - Includes: any regressions with casualty estimates as outcomes or predictors
+
+**Sub-family considerations:**
+
+Within a family, further subdivision into sub-families by research question may be appropriate when:
+- Research questions test distinct hypotheses on the same outcome domain
+- The questions use non-overlapping predictor sets
+- Treating the entire family as one unit would be excessively conservative
+
+Example: Within "Support Reactions", RQ3 (treatment effects) tests a specific causal hypothesis, while RQ5 explores demographic associations. These could be treated as separate sub-families.
+
+### 3.3 Unit of testing: Coefficient vs regression
+
+**Decision rule:**
+
+- **Exploratory analyses**: Treat **each coefficient** as an independent test
+  - Rationale: All predictors are substantively interesting and merit individual interpretation
+  - Example: "Which demographic variables correlate with nuclear winter awareness?" (RQ1 demographic models, if conducted)
+  - Example: "Which decision factors predict support for retaliation?" (RQ5 exploratory models)
+
+- **Hypothesis-driven analyses**: Treat **each regression** as a single test
+  - Rationale: One primary predictor is hypothesis-driven; other variables serve as statistical controls
+  - Example: RQ2 (awareness→support): Primary interest is awareness coefficients; age, sex, ethnicity, political affiliation are controls
+  - Example: RQ3 (treatment effects): Primary interest is treatment coefficient; covariates are controls
+
+### 3.4 Benjamini-Hochberg FDR procedure
+
+**Within each analysis family:**
+
+1. **Identify substantive coefficients**
+   - For exploratory models: all predictor coefficients
+   - For hypothesis-driven models: primary predictor coefficient(s) only
+
+2. **Collect all raw p-values** for substantive coefficients across all models in the family
+
+3. **Apply Benjamini-Hochberg correction:**
+   ```r
+   adjusted_p <- p.adjust(raw_p_values, method = "BH")
+   ```
+
+4. **Interpret using adjusted p-values (q-values)**
+   - Report significance based on q-value ≤ α (typically α = 0.05)
+   - q-value represents the expected proportion of false discoveries among all discoveries at this threshold
+
+### 3.5 Reporting requirements
+
+**For all regression coefficients in markdown output:**
+
+Present a table with the following columns:
+- **Variable name**
+- **Effect size** (log odds, OR, or standardized coefficient)
+- **95% Confidence Interval**
+- **Raw p-value** (uncorrected)
+- **Adjusted p-value (q)** (Benjamini-Hochberg FDR within family)
+- **Significance indicator** (based on q-value)
+
+**Example table format:**
+
+| Variable | Log Odds | 95% CI | Raw p | FDR q | Sig |
+|----------|----------|--------|-------|-------|-----|
+| awareness_1980s | 0.317 | [0.173, 0.461] | 0.0000 | 0.0001 | *** |
+| awareness_recent_academic | -0.086 | [-0.243, 0.071] | 0.2826 | 0.3532 | ns |
+| awareness_recent_media | -0.126 | [-0.281, 0.029] | 0.1109 | 0.1663 | ns |
+
+**Interpretation statement template:**
+
+"Within the [Family Name] analysis family, we conducted [N] tests on [K] substantive coefficients. Applying Benjamini-Hochberg FDR correction (α = 0.05), [M] coefficients remained statistically significant (q ≤ 0.05)."
+
+### 3.6 Implementation notes
+
+**Timing of correction:**
+
+- FDR correction should be applied **after** all models within a family have been fitted
+- This may require iterative updates to markdown files as additional models are added
+
+**Cross-family tests:**
+
+- Do **not** correct across families (e.g., do not pool p-values from Awareness and Support families)
+- Each family maintains its own FDR correction
+
+**Interaction terms:**
+
+- If testing interactions exploratively, include interaction term p-values in the FDR correction pool
+- If testing a specific pre-specified interaction (hypothesis-driven), treat as primary coefficient
+
+**Model selection tests:**
+
+- Likelihood ratio tests for model comparison (e.g., POM vs PPOM) are **not** included in FDR correction
+- These are diagnostic tests for model specification, not substantive hypothesis tests
+
+### 3.7 Application to specific research questions
+
+**RQ1 (Awareness Structure):**
+- Family: Awareness Items
+- No FDR correction needed (no hypothesis tests; only factor analysis and descriptive statistics)
+
+**RQ2 (Awareness→Support):**
+- Family: Support Reactions
+- Unit of testing: Regression (primary interest is awareness coefficients; covariates are controls)
+- Collect p-values for: awareness coefficients only (items or mean, depending on model selection)
+- Apply FDR across all awareness coefficients in final selected models
+
+**RQ3 (Treatment Effects):**
+- Family: Support Reactions (sub-family: Treatment Effects may be appropriate)
+- Unit of testing: Regression (primary interest is treatment coefficient; covariates are controls)
+- Collect p-values for: treatment effect coefficient only
+- FDR correction: If treating as sub-family, only one test (no correction needed). If pooled with RQ2, include in Support Reactions family FDR correction.
+
+**RQ4 (Decision Factors Structure):**
+- Family: Decision Factors
+- No FDR correction needed (no hypothesis tests; only EFA and descriptive statistics)
+
+**RQ5 (Exploratory Integration):**
+- Family: Support Reactions
+- Unit of testing: Coefficient (all predictors substantively interesting)
+- Collect p-values for: all predictor coefficients (awareness, decision factors, interactions)
+- Apply FDR across all substantive coefficients in exploratory models
+
+---
+
+## 4. RQ1 – STRUCTURE OF NUCLEAR-WINTER AWARENESS
+
+### 4.1 Input construction
 
 ```r
 rq1_awareness_items <- data.tb %>%
@@ -356,13 +537,13 @@ rq1_awareness_items <- data.tb %>%
          nw.awareness.recent.media)
 ```
 
-### 3.2 Diagnostics
+### 4.2 Diagnostics
 
 - **Cronbach’s alpha**  
 - **Pearson correlation matrix**  
 - **Polychoric correlation matrix**
 
-### 3.3 Factor analysis
+### 4.3 Factor analysis
 
 ```r
 rq1_fa <- psych::fa(rq1_awareness_items[-1], nfactors = 1, fm = "minres")
@@ -374,7 +555,7 @@ Extract:
 - Communalities  
 - Variance explained  
 
-### 3.4 Awareness mean index
+### 4.4 Awareness mean index
 
 ```r
 rq1_awareness_mean <- rq1_awareness_items %>%
@@ -387,7 +568,7 @@ Standardized version:
 awareness_mean_z = scale(awareness_mean)
 ```
 
-### 3.5 Outputs
+### 4.5 Outputs
 
 **Single markdown file:** `RQ1_awareness_structure.md`
 
@@ -407,7 +588,7 @@ Contains:
 
 Only **treatment-group respondents** (`shown.infographic == "A"`) have awareness items.
 
-### 4.1 Data assembly
+### 5.1 Data assembly
 
 ```r
 rq2_data <- data.tb %>%
@@ -418,16 +599,16 @@ rq2_data <- data.tb %>%
 
 Include covariates.
 
-### 4.2 Check A – Distribution & monotonicity
+### 5.2 Check A – Distribution & monotonicity
 
 - Plot distribution of `awareness_mean`
 - Examine support means across quartiles
 
-### 4.3 Check B – Item-wise vs mean model comparison
+### 5.3 Check B – Item-wise vs mean model comparison
 
 **MANDATORY WORKFLOW:** Follow Section 2.1 (POM→PPOM) for both models.
 
-#### 4.3.1 Fit initial POM models
+#### 5.3.1 Fit initial POM models
 
 - **Model 1 (POM):** separate awareness items
   ```r
@@ -453,7 +634,7 @@ Include covariates.
   )
   ```
 
-#### 4.3.2 Diagnostics and assumption testing
+#### 5.3.2 Diagnostics and assumption testing
 
 **For each POM model, execute:**
 
@@ -464,7 +645,7 @@ Include covariates.
    - Document omnibus p-value
    - Document per-predictor p-values
 
-#### 4.3.3 PPOM escalation (if needed)
+#### 5.3.3 PPOM escalation (if needed)
 
 **If Brant omnibus p ≤ 0.05 for Model 1:**
 
@@ -502,7 +683,7 @@ model2_ppom <- fit_ppom(
 - **Compute Δp_max** between Model 2 POM and Model 2 PPOM
 - **Select final Model 2** per Section 2.1.6 criteria
 
-#### 4.3.4 Cross-model comparison (Items vs Mean)
+#### 5.3.4 Cross-model comparison (Items vs Mean)
 
 After selecting final versions of Model 1 and Model 2:
 
@@ -518,7 +699,7 @@ Threshold:
 
 - **Use mean index if** `delta_p_max_cross ≤ 0.03`
 
-### 4.4 Final decision flag
+### 5.4 Final decision flag
 
 ```r
 rq2_awareness_mean_ok_overall <-
@@ -528,7 +709,7 @@ rq2_awareness_mean_ok_overall <-
 
 If this flag is `FALSE`, downstream analyses (RQ5) should use **separate awareness items** rather than the mean index.
 
-### 4.5 Outputs
+### 5.5 Outputs
 
 **Required files (2 total):**
 
@@ -574,9 +755,9 @@ Contains:
 
 ---
 
-## 5. RQ3 – TREATMENT EFFECT OF NUCLEAR-WINTER INFORMATION
+## 6. RQ3 – TREATMENT EFFECT OF NUCLEAR-WINTER INFORMATION
 
-### 5.1 Construct dataset
+### 6.1 Construct dataset
 
 ```r
 rq3_data <- data.tb %>%
@@ -584,7 +765,7 @@ rq3_data <- data.tb %>%
          !is.na(support.nuclear.strike.on.russia_numeric))
 ```
 
-### 5.2 Unadjusted effects
+### 6.2 Unadjusted effects
 
 Compute descriptive statistics by treatment vs control:
 
@@ -592,7 +773,7 @@ Compute descriptive statistics by treatment vs control:
 - Proportion with high support (≥4)
 - Standard deviations
 
-### 5.3 Ordinal regression models
+### 6.3 Ordinal regression models
 
 **MANDATORY WORKFLOW:** Follow Section 2.1 (POM→PPOM) for all models.
 
@@ -628,7 +809,7 @@ Compute descriptive statistics by treatment vs control:
    - Retain both POM and PPOM
    - Document model selection justification per Section 2.1.6
 
-### 5.4 Predicted probabilities
+### 6.4 Predicted probabilities
 
 Compute predicted probabilities for:
 
@@ -638,7 +819,7 @@ Compute predicted probabilities for:
 
 Use representative covariate profiles (e.g., median age, modal categories).
 
-### 5.5 Outputs
+### 6.5 Outputs
 
 **Required files (2 total):**
 
@@ -670,9 +851,9 @@ Page structure:
 
 ---
 
-## 6. RQ4 – DECISION FACTORS: STRUCTURE VIA EFA
+## 7. RQ4 – DECISION FACTORS: STRUCTURE VIA EFA
 
-### 6.1 Items construction
+### 7.1 Items construction
 
 ```r
 rq4_decision_items <- data.tb %>%
@@ -680,11 +861,11 @@ rq4_decision_items <- data.tb %>%
   filter(if_any(ends_with("_numeric"), ~ !is.na(.)))
 ```
 
-### 6.2 Descriptive profiles
+### 7.2 Descriptive profiles
 
 Plot decision-factor means by retaliation-support level (1–5).
 
-### 6.3 Polychoric EFA
+### 7.3 Polychoric EFA
 
 ```r
 decision_poly <- psych::polychoric(rq4_decision_items[-1])$rho
@@ -693,7 +874,7 @@ fa2 <- psych::fa(..., nfactors=2)
 fa3 <- psych::fa(..., nfactors=3)
 ```
 
-### 6.4 Human bookmark
+### 7.4 Human bookmark
 
 Do **not** automatically generate factor-based indices.
 
@@ -709,7 +890,7 @@ Review whether 2-factor “deterrence vs risk-avoidance” structure is defensib
 Do not create indices until instructed.
 ```
 
-### 6.5 Outputs
+### 7.5 Outputs
 
 **Single markdown file:** `RQ4_decision_factors_structure.md`
 
@@ -726,9 +907,9 @@ Contains:
 
 ---
 
-## 7. RQ5 – EXPLORATORY INTEGRATION (AWARENESS × DECISION FACTORS × SUPPORT)
+## 8. RQ5 – EXPLORATORY INTEGRATION (AWARENESS × DECISION FACTORS × SUPPORT)
 
-### 7.1 Conditional logic
+### 8.1 Conditional logic
 
 **BOOKMARK FOR HUMAN APPROVAL**
 
@@ -737,7 +918,7 @@ Proceed only after:
 - RQ2 flag indicates whether to use `awareness_mean` or separate awareness items
 - RQ4 human interpretation specifies factor structure (2-factor, 1-factor, or item-wise approach)
 
-### 7.2 Exploratory models
+### 8.2 Exploratory models
 
 **MANDATORY WORKFLOW:** Follow Section 2.1 (POM→PPOM) for all models.
 
@@ -778,7 +959,7 @@ Proceed only after:
 - Assess improvement from interaction terms
 - Document final model selection
 
-### 7.3 Outputs
+### 8.3 Outputs
 
 **Required files (2 total):**
 
@@ -810,17 +991,17 @@ Page structure (3 pages per model):
 
 ---
 
-## 8. FINAL REFACTOR & CODE CLEANUP
+## 9. FINAL REFACTOR & CODE CLEANUP
 
 **BOOKMARK FOR HUMAN APPROVAL**
 
 This section should be executed **only after** all RQ analyses (RQ1–RQ5) are complete and approved by the human analyst.
 
-### 8.1 Purpose
+### 9.1 Purpose
 
 Remove legacy config-based analysis code from `Ingram_NW_Awareness.R` to prepare the repository for publication alongside the research paper.
 
-### 8.2 Files to review for removal
+### 9.2 Files to review for removal
 
 From `Ingram_NW_Awareness.R`:
 
@@ -833,12 +1014,12 @@ From `Ingram_NW_Awareness.R`:
 3. **Commented-out code** – Bivariate tests and other legacy analysis
    - **Decision**: REMOVE
 
-### 8.3 Files to potentially archive or remove
+### 9.3 Files to potentially archive or remove
 
 - Old output folders in `outputs/` with config-based results
 - Any temporary or intermediate analysis files not part of final publication workflow
 
-### 8.4 Verification checklist
+### 9.4 Verification checklist
 
 After refactoring:
 
@@ -848,7 +1029,7 @@ After refactoring:
 - [ ] All helper functions in `R/` directory are still functional
 - [ ] Repository is clean and ready for public release
 
-### 8.5 Documentation updates
+### 9.5 Documentation updates
 
 Update `README.md` (if exists) or create one to document:
 
@@ -859,7 +1040,7 @@ Update `README.md` (if exists) or create one to document:
 
 ---
 
-## 9. LLM DO/DON'T CHECKLIST
+## 10. LLM DO/DON'T CHECKLIST
 
 ### DO:
 

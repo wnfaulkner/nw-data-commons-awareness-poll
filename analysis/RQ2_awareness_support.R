@@ -60,7 +60,9 @@ rq2_data <- data.tb %>%
     age,
     sex,
     ethnicity,
+    ethnicity.collapsed,
     political.affiliation,
+    political.affiliation.collapsed,
     employment.status,
     student.status
   ) %>%
@@ -121,16 +123,19 @@ cat("\n")
 
 cat("4.3 Comparing item-wise vs mean index models...\n")
 
-# Covariates for adjusted models (using available variables)
-covariates <- c("age", "sex", "ethnicity", "political.affiliation", "employment.status", "student.status")
+# Covariates for adjusted models (using collapsed categorical variables)
+# Note: Using collapsed versions (ethnicity.collapsed, political.affiliation.collapsed)
+# to improve model convergence and coefficient stability
+covariates <- c("age", "sex", "ethnicity.collapsed", "political.affiliation.collapsed",
+                "employment.status", "student.status")
 
 # Create prediction data (needed for both initial comparison and PPOM comparison)
 representative_profile <- rq2_data %>%
   summarise(
     age = median(age, na.rm = TRUE),
     sex = names(sort(table(sex), decreasing = TRUE))[1],
-    ethnicity = names(sort(table(ethnicity), decreasing = TRUE))[1],
-    political.affiliation = names(sort(table(political.affiliation), decreasing = TRUE))[1],
+    ethnicity.collapsed = names(sort(table(ethnicity.collapsed), decreasing = TRUE))[1],
+    political.affiliation.collapsed = names(sort(table(political.affiliation.collapsed), decreasing = TRUE))[1],
     employment.status = names(sort(table(employment.status), decreasing = TRUE))[1],
     student.status = names(sort(table(student.status), decreasing = TRUE))[1]
   )
@@ -198,7 +203,7 @@ cat("4.3a Testing proportional odds assumption...\n")
 # Test Model 1
 cat("  Testing Model 1 (separate items)...\n")
 brant1 <- tryCatch({
-  perform_brant_test(model1_items$model, verbose = FALSE)
+  perform_brant_test(model1_items$model, verbose = TRUE)
 }, error = function(e) {
   cat("    WARNING: Brant test failed:", e$message, "\n")
   list(omnibus_p_value = 0.99, brant_test_failed = TRUE, error_message = e$message)
@@ -210,7 +215,7 @@ model1_violates_po <- !is.null(brant1$brant_test_failed) || brant1$omnibus_p_val
 # Test Model 2
 cat("  Testing Model 2 (mean index)...\n")
 brant2 <- tryCatch({
-  perform_brant_test(model2_mean$model, verbose = FALSE)
+  perform_brant_test(model2_mean$model, verbose = TRUE)
 }, error = function(e) {
   cat("    WARNING: Brant test failed:", e$message, "\n")
   list(omnibus_p_value = 0.99, brant_test_failed = TRUE, error_message = e$message)
@@ -604,43 +609,22 @@ awareness_mean_coef <- model2_final$coefficients %>%
   filter(variable == "awareness_mean")
 
 # ==============================================================================
-# 4.5 Generate Markdown Output
+# 4.5a Generate Model Comparison Report (One-time Archive)
 # ==============================================================================
 
-cat("4.5 Generating markdown report...\n")
+cat("4.5a Generating model comparison archive (saved to main outputs/ directory)...\n")
 
-md_file <- file.path(rq2_dir, "RQ2_awareness_support.md")
-md_content <- c(
-  "# RQ2: Using Awareness as Associational Predictor",
+# Save to main outputs/ directory (not timestamped subdirectory)
+model_comparison_file <- file.path("outputs", "RQ2_model_comparison_items_vs_mean.md")
+model_comparison_content <- c(
+  "# RQ2: Model Comparison - Items vs Mean Index",
   "",
-  "## Overview",
+  "**Note**: This analysis was conducted to determine whether to use separate awareness items or the mean index in the final model. This is an archival record; future RQ2 reports will show only the selected model.",
   "",
   paste0("- **Analysis date**: ", Sys.Date()),
   paste0("- **Sample**: Treatment group with complete data (N = ", nrow(rq2_data), ")"),
-  "- **Outcome**: Support for nuclear strike on Russia (ordinal, 1-5)",
-  "- **Predictor of interest**: Nuclear winter awareness (from RQ1)",
   "",
-  "## Data Assembly",
-  "",
-  "Analysis restricted to treatment group respondents (shown infographic) with complete awareness and outcome data.",
-  "",
-  paste0("- **Complete cases**: ", nrow(rq2_data)),
-  paste0("- **Awareness mean**: ", round(awareness_summary$mean, 2), " (SD = ", round(awareness_summary$sd, 2), ")"),
-  "",
-  "## Distribution & Monotonicity Check",
-  "",
-  "### Support by Awareness Quartile",
-  "",
-  "| Quartile | N | Mean Support | SD |",
-  "|----------|---|--------------|-----|",
-  paste0("| ", support_by_quartile$awareness_quartile, " | ",
-         support_by_quartile$n, " | ",
-         round(support_by_quartile$mean_support, 3), " | ",
-         round(support_by_quartile$sd_support, 3), " |"),
-  "",
-  "## Model Comparison: Items vs Mean Index",
-  "",
-  "### Model 1: Separate Awareness Items",
+  "## Model 1: Separate Awareness Items",
   "",
   "**Formula**: support ~ 1980s + recent_academic + recent_media + age + sex + ethnicity + political_affiliation + employment_status + student_status",
   "",
@@ -649,7 +633,7 @@ md_content <- c(
   paste0("- **Log-Likelihood**: ", round(model1_items$model_stats$log_likelihood, 2)),
   paste0("- **N predictors**: ", model1_items$model_stats$n_predictors),
   "",
-  "#### Full Coefficients Table (Model 1)",
+  "### Full Coefficients Table (Model 1)",
   "",
   "| Variable | Log Odds | SE | OR | 95% CI | p-value |",
   "|----------|----------|-----|-----|--------|---------|",
@@ -662,7 +646,7 @@ md_content <- c(
            sprintf("%.4f", as.numeric(row["p_value"])), " |")
   }),
   "",
-  "### Model 2: Awareness Mean Index",
+  "## Model 2: Awareness Mean Index",
   "",
   "**Formula**: support ~ awareness_mean + age + sex + ethnicity + political_affiliation + employment_status + student_status",
   "",
@@ -671,7 +655,7 @@ md_content <- c(
   paste0("- **Log-Likelihood**: ", round(model2_mean$model_stats$log_likelihood, 2)),
   paste0("- **N predictors**: ", model2_mean$model_stats$n_predictors),
   "",
-  "#### Full Coefficients Table (Model 2)",
+  "### Full Coefficients Table (Model 2)",
   "",
   "| Variable | Log Odds | SE | OR | 95% CI | p-value |",
   "|----------|----------|-----|-----|--------|---------|",
@@ -684,9 +668,9 @@ md_content <- c(
            sprintf("%.4f", as.numeric(row["p_value"])), " |")
   }),
   "",
-  "### Model Diagnostics Summary",
+  "## Model Diagnostics Summary",
   "",
-  "#### Residual Statistics",
+  "### Residual Statistics",
   "",
   "**Model 1 (Separate Items):**",
   "",
@@ -706,9 +690,9 @@ md_content <- c(
          sprintf("%.2f", min(residuals_mean_pom$pearson_residual)), ", ",
          sprintf("%.2f", max(residuals_mean_pom$pearson_residual)), "]"),
   "",
-  "**Note**: Full diagnostic plots (residuals vs fitted, Q-Q plots, scale-location, observed vs predicted) and coefficient forest plots are available in `RQ2_POM_diagnostics.pdf`.",
+  "**Note**: Full diagnostic plots (residuals vs fitted, Q-Q plots, scale-location, observed vs predicted) and coefficient forest plots are available in the timestamped output directories.",
   "",
-  "### Predicted Probability Comparison",
+  "## Predicted Probability Comparison",
   "",
   paste0("- **Maximum probability difference (Δp_max)**: ", round(delta_p_max_cross, 4)),
   paste0("- **Threshold for parsimony**: 0.03"),
@@ -716,9 +700,93 @@ md_content <- c(
                                     "Mean index is acceptable (Δp ≤ 0.03)",
                                     "Use separate items (Δp > 0.03)")),
   "",
+  "## Final Decision",
+  "",
+  paste0("Based on Cronbach's α = ", round(rq1_alpha$total$raw_alpha, 3),
+         " and Δp_max = ", round(delta_p_max_cross, 4), ":"),
+  "",
+  paste0("**", toupper(ifelse(rq2_awareness_mean_ok_overall, "Approved for mean index", "Use separate items")), "**"),
+  "",
+  "---",
+  paste0("*Generated: ", Sys.time(), "*")
+)
+
+writeLines(model_comparison_content, model_comparison_file)
+cat("  ✓ outputs/RQ2_model_comparison_items_vs_mean.md\n\n")
+
+# ==============================================================================
+# 4.5b Generate Primary Markdown Report (Key Predictors Only)
+# ==============================================================================
+
+cat("4.5b Generating primary markdown report (key predictors only)...\n")
+
+# Filter coefficients to show only awareness variables
+awareness_items_coefs_display <- model1_items$coefficients %>%
+  filter(grepl("awareness", variable))
+
+awareness_mean_coef_display <- model2_mean$coefficients %>%
+  filter(variable == "awareness_mean")
+
+md_file <- file.path(rq2_dir, "RQ2_awareness_support.md")
+md_content <- c(
+  "# RQ2: Using Awareness as Associational Predictor",
+  "",
+  "## Overview",
+  "",
+  paste0("- **Analysis date**: ", Sys.Date()),
+  paste0("- **Sample**: Treatment group with complete data (N = ", nrow(rq2_data), ")"),
+  "- **Outcome**: Support for nuclear strike on Russia (ordinal, 1-5)",
+  "- **Predictor of interest**: Nuclear winter awareness (from RQ1)",
+  paste0("- **Model type**: ", model2_final_type, " (Proportional Odds Model)"),
+  "",
+  "## Data Assembly",
+  "",
+  "Analysis restricted to treatment group respondents (shown infographic) with complete awareness and outcome data.",
+  "",
+  paste0("- **Complete cases**: ", nrow(rq2_data)),
+  paste0("- **Awareness mean**: ", round(awareness_summary$mean, 2), " (SD = ", round(awareness_summary$sd, 2), ")"),
+  "",
+  "## Distribution & Monotonicity Check",
+  "",
+  "### Support by Awareness Quartile",
+  "",
+  "| Quartile | N | Mean Support | SD |",
+  "|----------|---|--------------|-----|",
+  paste0("| ", support_by_quartile$awareness_quartile, " | ",
+         support_by_quartile$n, " | ",
+         round(support_by_quartile$mean_support, 3), " | ",
+         round(support_by_quartile$sd_support, 3), " |"),
+  "",
+  "## Regression Results: Key Predictors",
+  "",
+  "### Model: Separate Awareness Items",
+  "",
+  "**Formula**: support ~ 1980s + recent_academic + recent_media + covariates",
+  "",
+  paste0("- **AIC**: ", round(model1_items$model_stats$aic, 2)),
+  paste0("- **BIC**: ", round(model1_items$model_stats$bic, 2)),
+  paste0("- **Log-Likelihood**: ", round(model1_items$model_stats$log_likelihood, 2)),
+  "",
+  "#### Awareness Predictors (Key Variables)",
+  "",
+  "| Variable | Log Odds | SE | OR | 95% CI | p-value |",
+  "|----------|----------|-----|-----|--------|---------|",
+  apply(awareness_items_coefs_display, 1, function(row) {
+    paste0("| ", row["variable"], " | ",
+           sprintf("%.3f", as.numeric(row["log_odds"])), " | ",
+           sprintf("%.3f", as.numeric(row["std_error"])), " | ",
+           sprintf("%.3f", as.numeric(row["odds_ratio"])), " | ",
+           sprintf("%.3f-%.3f", as.numeric(row["ci_lower_or"]), as.numeric(row["ci_upper_or"])), " | ",
+           sprintf("%.4f", as.numeric(row["p_value"])), " |")
+  }),
+  "",
+  "**Note**: Full coefficients table including covariates available in PDF diagnostics.",
+  "",
   "## Final Decision Flag",
   "",
-  "### Criteria for Using Awareness Mean Index Downstream",
+  paste0("**Decision**: Use **separate awareness items** in final model"),
+  "",
+  "### Rationale",
   "",
   "1. **Internal consistency**: Cronbach's α ≥ 0.70",
   paste0("   - RQ1 result: α = ", round(rq1_alpha$total$raw_alpha, 3),
@@ -728,26 +796,30 @@ md_content <- c(
   paste0("   - RQ2 result: Δp = ", round(delta_p_max_cross, 4),
          ifelse(delta_p_max_cross <= 0.03, " ✓", " ✗")),
   "",
-  paste0("### **Overall Decision: ", toupper(ifelse(rq2_awareness_mean_ok_overall,
-                                                     "Approved",
-                                                     "Not Approved")), "**"),
+  paste0("**Overall**: Awareness mean is ",
+         toupper(ifelse(rq2_awareness_mean_ok_overall, "approved", "not approved")),
+         " for downstream use."),
   "",
   ifelse(rq2_awareness_mean_ok_overall,
-         "The awareness mean index meets both criteria and is approved for use in RQ5 exploratory analyses.",
-         "The awareness mean index does not meet all criteria. Consider using separate awareness items in downstream analyses."),
+         "Based on acceptable reliability and minimal prediction differences, the awareness mean index may be used in exploratory analyses.",
+         "Due to insufficient reliability or substantial prediction differences, separate awareness items should be used in downstream analyses."),
+  "",
+  "**Note**: See `outputs/RQ2_model_comparison_items_vs_mean.md` for full comparison details.",
   "",
   "## Interpretation",
   "",
-  ifelse(awareness_mean_coef$p_value < 0.05,
-         paste0("Awareness of nuclear winter is significantly associated with support for nuclear retaliation ",
-                "(OR = ", round(awareness_mean_coef$odds_ratio, 3), ", p = ",
-                sprintf("%.4f", awareness_mean_coef$p_value), "). ",
-                ifelse(awareness_mean_coef$odds_ratio > 1,
-                       "Higher awareness is associated with greater support.",
-                       "Higher awareness is associated with lower support.")),
-         paste0("Awareness of nuclear winter is not significantly associated with support for nuclear retaliation ",
-                "(OR = ", round(awareness_mean_coef$odds_ratio, 3), ", p = ",
-                sprintf("%.4f", awareness_mean_coef$p_value), ").")),
+  "### Awareness Items Association with Support",
+  "",
+  apply(awareness_items_coefs_display, 1, function(row) {
+    var_name <- gsub("_numeric", "", row["variable"])
+    or <- as.numeric(row["odds_ratio"])
+    p <- as.numeric(row["p_value"])
+    sig <- ifelse(p < 0.05, "significantly", "not significantly")
+    direction <- ifelse(or > 1, "positively", "negatively")
+    paste0("- **", var_name, "**: ", sig, " associated with support (OR = ",
+           sprintf("%.3f", or), ", p = ", sprintf("%.4f", p), ")",
+           ifelse(p < 0.05, paste0(" - ", direction, " associated"), ""))
+  }),
   "",
   "**Note**: This is an associational analysis within the treatment group only. Causal claims require comparison with the control group (see RQ3).",
   "",
@@ -760,7 +832,7 @@ md_content <- c(
 )
 
 writeLines(md_content, md_file)
-cat("  ✓ RQ2_awareness_support.md\n\n")
+cat("  ✓ RQ2_awareness_support.md (key predictors only)\n\n")
 
 # ==============================================================================
 # Summary and Next Steps
@@ -781,8 +853,9 @@ cat("  - Awareness mean approved for downstream use:",
     ifelse(rq2_awareness_mean_ok_overall, "YES", "NO"), "\n\n")
 
 cat("Output files:\n")
-cat("  - RQ2_awareness_support.md (comprehensive markdown summary)\n")
-cat("  - RQ2_POM_diagnostics.pdf (diagnostic report)\n")
+cat("  - RQ2_awareness_support.md (primary report - key predictors only)\n")
+cat("  - RQ2_POM_diagnostics.pdf (diagnostic report - full coefficients)\n")
+cat("  - outputs/RQ2_model_comparison_items_vs_mean.md (archival comparison)\n")
 cat("    NOTE: PDF currently shows POM models only. PPOM pages not yet implemented.\n\n")
 
 cat("Output location:", rq2_dir, "\n\n")

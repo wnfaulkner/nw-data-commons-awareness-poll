@@ -86,6 +86,13 @@ perform_brant_test <- function(pom_model, verbose = TRUE) {
 
   if (verbose) {
     cat("  Proportional odds test completed. Processing results...\n")
+    cat("\n  DEBUG: Raw nominal_test output:\n")
+    print(nom_test_result)
+    cat("\n  DEBUG: Row names:\n")
+    print(rownames(nom_test_result))
+    cat("\n  DEBUG: Column names:\n")
+    print(colnames(nom_test_result))
+    cat("\n  DEBUG: Dimensions:", nrow(nom_test_result), "rows x", ncol(nom_test_result), "cols\n")
   }
 
   # Extract results from nominal_test
@@ -94,6 +101,10 @@ perform_brant_test <- function(pom_model, verbose = TRUE) {
 
   # Remove <none> row (which has NA p-value)
   test_results <- nom_test_result[rownames(nom_test_result) != "<none>", , drop = FALSE]
+
+  if (verbose) {
+    cat("\n  DEBUG: After removing <none>:", nrow(test_results), "rows\n")
+  }
 
   # Create test statistics dataframe in Brant-like format
   test_stats <- data.frame(

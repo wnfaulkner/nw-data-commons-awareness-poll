@@ -250,6 +250,15 @@ data.tb <- data.tb %>%
     decision.avoid.escalation_numeric = sapply(decision.avoid.escalation, extract_numeric_from_ordinal)
   )
 
+# CREATE COLLAPSED CATEGORICAL VARIABLES FOR REGRESSION
+# Rationale: High-cardinality categorical variables (political.affiliation=11 levels,
+# ethnicity=5 levels) cause convergence issues in proportional odds testing and
+# produce unstable coefficient estimates due to small cell sizes.
+cat("Creating collapsed categorical variables for regression models...\n")
+data.tb <- create_collapsed_categories(data.tb)
+cat("  ✓ political.affiliation.collapsed (11 → 4 levels)\n")
+cat("  ✓ ethnicity.collapsed (5 → 3 levels)\n\n")
+
 # DEFINE EXTRA ID VARIABLES (derived variables to include in reshaped tables)
 # Include calculated variables based on single columns (not multi-column aggregates like means)
 extra.id.vars <- c(

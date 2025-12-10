@@ -1,11 +1,11 @@
 {
   "session_metadata": {
-    "last_updated": "2025-12-07T21:47:00Z",
-    "session_number": 4,
+    "last_updated": "2025-12-09T20:45:00Z",
+    "session_number": "5 (continuation of Session 4)",
     "project": "Nuclear Winter Polling Data - Publication Analysis Pipeline",
-    "status": "INCOMPLETE - Proportional odds test implementation complete but results questionable",
-    "continuation_priority": "HIGH - User suspects nominal_test returns incorrect p=1.0",
-    "user_final_note": "Something is going wrong, but I cannot fix it now"
+    "status": "PAUSED - RQ2 PPOM implementation planned but not executed",
+    "continuation_priority": "HIGH - Three major refactoring tasks scheduled for tomorrow",
+    "user_final_note": "Pausing RQ2 implementation. Tomorrow: decision logging system, single-RQ execution, repo refactor"
   },
 
   "critical_user_meta_instructions": {
@@ -30,304 +30,361 @@
     "working_directory": "/home/wnf/code/nw-data-commons-awareness-poll",
     "main_script": "publication_analysis.R",
     "architecture": "Modular R pipeline: R/00_config.R through R/07_orchestration.R, analysis/RQ*.R scripts",
-    "primary_objective": "Implement mandatory POM→PPOM escalation workflow with diagnostic checking for all ordinal regressions",
+    "primary_objective": "Implement visual-inspection-based POM→PPOM workflow for ordinal regressions",
     "research_questions": {
       "RQ1": "Structure of Nuclear-Winter Awareness (EFA) - COMPLETE",
-      "RQ2": "Awareness as Associational Predictor - CURRENT FOCUS",
-      "RQ3": "Treatment Effects - uses same PO testing",
+      "RQ2": "Awareness as Associational Predictor - PPOM IMPLEMENTATION PENDING",
+      "RQ3": "Treatment Effects - visual inspection bookmark needed",
       "RQ4": "Decision Factors Structure (EFA) - COMPLETE"
     }
   },
 
-  "current_problem_definition": {
-    "main_task": "Test proportional odds assumption → escalate to PPOM if violated → compare models → select final",
-    "blocking_issue": "Brant test (brant package v0.3.0) fails with 'object of type 'closure' is not subsettable'",
-    "root_cause": "Brant package has scoping bug with eval.parent when using namespace prefix or certain package load orders",
-    "solution_implemented": "Replaced brant::brant() with ordinal::nominal_test() - Likelihood Ratio test alternative",
-    "current_status": "Implementation works, tests pass in isolation, BUT returns p=1.0 for all RQ2 models",
-    "user_concern": "Results look wrong - p=1.0 suggests perfect fit or extraction error",
-    "session_outcome": "Function implemented and tested but needs verification before deployment"
-  },
+  "session_5_work_completed": {
+    "categorical_variable_collapsing": {
+      "problem": "High-cardinality categorical variables (political.affiliation=11 levels, ethnicity=5 levels) caused convergence issues and unstable coefficient estimates",
+      "solution_implemented": "Created create_collapsed_categories() function in R/02_data_processing.R",
+      "political_affiliation_mapping": {
+        "original_levels": 11,
+        "collapsed_levels": 4,
+        "groups": {
+          "Left-leaning": ["UK-Labour", "USA-Democrat", "UK-Green", "UK-SNP"],
+          "Right-leaning": ["UK-Conservative", "USA-Republican"],
+          "Unaffiliated/Uncertain": ["USA-Independent", "UK-Independent", "Don't Know", "Would not vote"],
+          "Other": ["Other", "UK-Plaid Cymru"]
+        },
+        "reference_level": "Unaffiliated/Uncertain"
+      },
+      "ethnicity_mapping": {
+        "original_levels": 5,
+        "collapsed_levels": 3,
+        "groups": {
+          "White": ["White"],
+          "Black": ["Black"],
+          "Asian & Other": ["Asian", "Mixed", "Other"]
+        },
+        "reference_level": "White"
+      },
+      "files_modified": [
+        "R/02_data_processing.R - added create_collapsed_categories() function",
+        "publication_analysis.R - added call to create_collapsed_categories()",
+        "analysis/RQ2_awareness_support.R - updated to use ethnicity.collapsed and political.affiliation.collapsed",
+        "analysis/RQ3_treatment_effects.R - updated to use collapsed variables"
+      ],
+      "testing_status": "COMPLETE - full pipeline tested successfully, all analyses (RQ1-RQ4) run without errors"
+    },
 
-  "technical_decision_brant_vs_nominal_test": {
-    "question": "Is ordinal::nominal_test() equivalent to Brant test?",
-    "answer": "NO - different methods, but both valid for testing proportional odds assumption",
-    "brant_test": {
-      "method": "Wald-type test",
-      "approach": "Fits J-1 binary logistic models, compares coefficients using Wald statistic",
-      "package": "brant v0.3.0",
-      "status": "ABANDONED - scoping bug unfixable"
+    "nominal_test_limitation_documented": {
+      "issue": "ordinal::nominal_test() returns NA for all predictors (p=1.0) even with collapsed categorical variables",
+      "root_cause": "nominal_test attempts to fit very flexible models with separate coefficients for each predictor at each threshold, causing rank-deficiency and convergence issues",
+      "mitigation_attempted": "Collapsed categorical variables to reduce degrees of freedom - INSUFFICIENT",
+      "conservative_behavior": "When test fails, pipeline defaults to POM (more restrictive model)",
+      "documentation_added": "analysis_protocol_v3.md Section 2.1.3 - comprehensive explanation of limitation, mitigation strategy, and conservative interpretation",
+      "conclusion": "Automated PO testing with nominal_test is unreliable for complex categorical models"
     },
-    "nominal_test": {
-      "method": "Likelihood Ratio (LR) test - similar to Wolfe-Gould test",
-      "approach": "Adds model terms to nominal formulas, performs LR goodness-of-fit tests",
-      "package": "ordinal v2023.12-4.1",
-      "status": "IMPLEMENTED - working but results need verification"
+
+    "visual_inspection_approach_adopted": {
+      "decision": "Abandon automated PO testing (Brant/nominal_test) in favor of visual inspection of diagnostic plots",
+      "rationale": "Automated tests are unreliable with categorical predictors; visual inspection is standard practice in ordinal regression",
+      "workflow_change": "POM → Diagnostics → VISUAL INSPECTION BOOKMARK (human decision) → (if violated) PPOM → Diagnostics",
+      "rq2_specific_decision": "Based on visual inspection of POM diagnostics, user determined PO assumption violated → proceed to PPOM",
+      "implementation_status": "PLANNED but NOT EXECUTED (paused for tomorrow)",
+      "protocol_update_needed": "analysis_protocol_v3.md Section 2.1.3 needs rewrite to emphasize visual inspection over automated tests"
     },
-    "statistical_comparison": {
-      "type_I_error_control": "Both Brant and nominal_test control Type I error well (better than Score/basic Wald)",
-      "small_sample_performance": "Both recommended for small samples",
-      "large_sample_performance": "Comparable power",
-      "conclusion": "nominal_test is methodologically sound alternative"
+
+    "rq2_model_structure_simplified": {
+      "decision": "Remove Model 2 (awareness mean) from RQ2 reporting",
+      "rationale": "Exploratory phase - testing different model specifications, no need to keep comparing items vs mean",
+      "model_1_specification": "support ~ 1980s + recent_academic + recent_media + age + sex + ethnicity.collapsed + political.affiliation.collapsed + employment.status + student.status",
+      "ppom_specification": "Same formula, all predictors allowed to vary across thresholds (parallel=FALSE)",
+      "reporting_structure": "Linear narrative: POM fit → diagnostics → visual inspection decision → PPOM fit → diagnostics → final model",
+      "files_to_delete": "outputs/RQ2_model_comparison_items_vs_mean.md (no longer relevant)",
+      "implementation_status": "NOT EXECUTED (paused)"
     }
   },
 
-  "implementation_details_high_priority": {
-    "file_modified": "R/04_regression_diagnostics.R",
-    "function_modified": "perform_brant_test()",
-    "lines_changed": "48-178 (complete rewrite)",
+  "tomorrow_tasks_priority_order": {
+    "task_1_decision_logging_system": {
+      "priority": "HIGHEST",
+      "reference_document": "PROTOCOL_SYSTEM_PROMPT.md in repo base directory",
+      "objective": "Implement systematic decision logging and version control for analytical decisions",
+      "rationale": "Creates audit trail for all analytical decisions (e.g., 'moved from POM to PPOM based on visual inspection')",
+      "implementation_location": "New directory: logging_and_version_control/ or decision_log/",
+      "expected_outputs": [
+        "Decision log file format/structure",
+        "Automated logging functions callable from analysis scripts",
+        "Version control for analysis decisions (not just code)"
+      ]
+    },
 
-    "key_implementation_steps": [
-      "Load ordinal package with library(ordinal)",
-      "Extract model data from polr model: model_data <- pom_model$model",
-      "Get column names: outcome_col <- names(model_data)[1], predictor_cols <- names(model_data)[-1]",
-      "Reconstruct formula with backticks to handle ordered(y): formula_str <- paste('`', outcome_col, '` ~ ', paste('`', predictor_cols, '`', sep='', collapse=' + '), sep='')",
-      "Refit as clm model: clm_model <- ordinal::clm(formula_obj, data=model_data, link='logit')",
-      "Run test: nom_test_result <- ordinal::nominal_test(clm_model)",
-      "Remove <none> row (has NA p-value): test_results <- nom_test_result[rownames(nom_test_result) != '<none>', ]",
-      "Extract to dataframe: chi_squared=LRT, degrees_of_freedom=Df, p_value=Pr(>Chi)",
-      "Filter NA p-values: test_stats <- test_stats[!is.na(test_stats$p_value), ]",
-      "Calculate omnibus as minimum p-value: omnibus_p_value <- min(test_stats$p_value, na.rm=TRUE)",
-      "Return same structure as original Brant for compatibility"
+    "task_2_single_rq_execution": {
+      "priority": "HIGH",
+      "objective": "Restructure code so each RQ can be run independently with single output file (not timestamped subdirectories)",
+      "current_issue": "Date-time subdirectories create clutter; hard to find latest results",
+      "desired_behavior": "Run analysis/RQ2_awareness_support.R → writes outputs/RQ2_awareness_support.md and outputs/RQ2_diagnostics.pdf (overwrites previous)",
+      "benefits": [
+        "Easier to iterate on single RQ without re-running all RQs",
+        "Always know where latest results are (no searching timestamped folders)",
+        "Clean outputs/ directory with one file per RQ"
+      ],
+      "files_to_modify": [
+        "R/00_config.R - remove timestamped directory creation",
+        "All analysis/RQ*.R scripts - update output paths",
+        "Helper functions in R/ - update to work with single output files"
+      ]
+    },
+
+    "task_3_repo_refactor": {
+      "priority": "HIGH",
+      "objective": "Create clean, organized repository structure and remove extraneous files",
+      "proposed_structure": {
+        "R/": "Helper function files (keep current modular structure)",
+        "analysis/": "One script per RQ (RQ1.R, RQ2.R, RQ3.R, RQ4.R, RQ5.R)",
+        "outputs/": "Single output directory with one .md and one .pdf per RQ",
+        "misc/": "Miscellaneous test files, deprecated code, exploratory scripts",
+        "decision_log/": "Decision logging and version control system (from Task 1)",
+        "root_files": ["publication_analysis.R", "analysis_protocol_v3.md", "PROTOCOL_SYSTEM_PROMPT.md", "README.md"]
+      },
+      "files_to_remove": [
+        "test_nominal_formula.R (debugging script, no longer needed)",
+        "check_category_sizes.R (one-off analysis, move to misc/)",
+        "Old timestamped output folders (archive or delete)",
+        "Any other temporary/test files"
+      ],
+      "cleanup_goals": [
+        "Repository ready for publication alongside paper",
+        "Clear separation between production code and exploratory/test code",
+        "Easy for future analyst to understand and replicate"
+      ]
+    }
+  },
+
+  "rq2_ppom_implementation_plan_not_executed": {
+    "user_decision": "Visual inspection of POM diagnostics shows PO violation → use PPOM",
+    "model_to_implement": "Model 1 (separate awareness items) with PPOM",
+    "ppom_specification": "All predictors allowed to vary across thresholds",
+    "linear_narrative_structure": [
+      "1. Fit initial POM → generate diagnostics (PDF pages 1-3)",
+      "2. VISUAL INSPECTION BOOKMARK: Human inspected diagnostics → decision: PO violated",
+      "3. Document specific observations from plots (e.g., non-parallel residuals)",
+      "4. Fit PPOM with all predictors flexible → generate diagnostics (PDF pages 4-6)",
+      "5. PPOM becomes final model (no need for POM vs PPOM comparison in exploratory phase)",
+      "6. Report PPOM coefficients and interpretation"
     ],
+    "markdown_structure": {
+      "section_1": "Overview and data assembly",
+      "section_2": "Initial Model: POM",
+      "section_3": "Diagnostic Assessment: PO violation identified via visual inspection",
+      "section_4": "Final Model: PPOM",
+      "section_5": "Interpretation and conclusions"
+    },
+    "pdf_structure": {
+      "pages_1_3": "POM diagnostics (coefficient table, forest plot, 4-panel diagnostics)",
+      "pages_4_6": "PPOM diagnostics (coefficient table, forest plot, 4-panel diagnostics)"
+    },
+    "implementation_status": "PLANNED - NOT EXECUTED (user requested pause)"
+  },
 
-    "critical_code_snippets": {
-      "formula_reconstruction": "formula_str <- paste('`', outcome_col, '` ~ ', paste('`', predictor_cols, '`', sep='', collapse=' + '), sep='')",
-      "clm_refit": "clm_model <- ordinal::clm(formula_obj, data=model_data, link='logit')",
-      "nominal_test_call": "nom_test_result <- ordinal::nominal_test(clm_model)",
-      "na_filtering": "test_stats <- test_stats[!is.na(test_stats$p_value), , drop=FALSE]",
-      "omnibus_calc": "if (nrow(test_stats) > 0) { omnibus_p_value <- min(test_stats$p_value, na.rm=TRUE) } else { omnibus_p_value <- 1.0 }"
+  "visual_inspection_bookmark_protocol": {
+    "purpose": "Mandatory human decision point in ordinal regression workflow",
+    "placement": "After POM diagnostics generated, before PPOM decision",
+    "decision_criteria": [
+      "Residuals vs fitted: Look for non-parallel patterns across outcome thresholds",
+      "Q-Q plot: Look for threshold-specific deviations from normality",
+      "Scale-location: Look for heteroscedasticity varying by threshold",
+      "Observed vs predicted: Look for systematic miscalibration at specific thresholds"
+    ],
+    "decision_outcomes": {
+      "po_assumption_holds": "Retain POM as final model",
+      "po_assumption_violated": "Proceed to PPOM fitting"
+    },
+    "documentation_requirement": "Document specific visual observations that led to decision",
+    "applies_to": ["RQ2", "RQ3", "RQ5 (future)"],
+    "rq2_status": "COMPLETED - decision made (use PPOM)",
+    "rq3_status": "PENDING - bookmark needs to be added to script",
+    "rq5_status": "PENDING - not yet created"
+  },
+
+  "protocol_document_updates_needed": {
+    "analysis_protocol_v3_section_2_1_3": {
+      "current_state": "Emphasizes automated Brant test with nominal_test as backup",
+      "needed_changes": [
+        "De-emphasize automated tests (make them optional/supplementary)",
+        "Elevate visual inspection to PRIMARY method for PO testing",
+        "Add detailed VISUAL INSPECTION BOOKMARK section with specific criteria",
+        "Document RQ2 decision as example (POM diagnostics showed violation)",
+        "Explain that automated tests unreliable with complex categorical models"
+      ]
+    },
+    "rq3_and_rq5_sections": {
+      "needed_changes": [
+        "Add VISUAL INSPECTION BOOKMARK steps",
+        "Note that RQ3/RQ5 await human inspection decisions",
+        "Maintain same workflow structure as updated RQ2"
+      ]
     }
   },
 
-  "debugging_history_compressed": {
-    "brant_test_debugging_attempts": {
-      "hypothesis_1_package_order": "REJECTED - tested all package combinations, worked fine",
-      "hypothesis_2_dplyr_masking": "REJECTED - no conflict",
-      "hypothesis_3_formula_construction": "REJECTED - as.formula(paste(...)) works",
-      "hypothesis_4_ordered_conversion": "REJECTED - numeric→ordered works",
-      "hypothesis_5_wnf_utils_conflict": "REJECTED - package loads fine",
-      "hypothesis_6_brant_scoping_bug": "CONFIRMED - package uses eval.parent incorrectly"
+  "key_file_modifications_this_session": {
+    "R/02_data_processing.R": {
+      "lines": "135-187",
+      "change": "Added create_collapsed_categories() function",
+      "rationale": "Improve model convergence and coefficient stability",
+      "testing": "COMPLETE - full pipeline runs successfully"
     },
-    "key_finding": "Brant package has fundamental scoping issue that cannot be worked around without modifying package source"
+    "publication_analysis.R": {
+      "location": "After variable creation, before export",
+      "change": "Added call to create_collapsed_categories()",
+      "output_confirmation": "Prints '✓ political.affiliation.collapsed (11 → 4 levels)' and '✓ ethnicity.collapsed (5 → 3 levels)'"
+    },
+    "analysis/RQ2_awareness_support.R": {
+      "lines": "52-68, 83-84, 87-95",
+      "changes": [
+        "Added ethnicity.collapsed and political.affiliation.collapsed to select() statement",
+        "Updated covariates definition to use collapsed variables",
+        "Updated representative_profile to use collapsed variables"
+      ],
+      "status": "UPDATED but PPOM implementation NOT EXECUTED"
+    },
+    "analysis/RQ3_treatment_effects.R": {
+      "lines": "40-53, 89-93, 213-221",
+      "changes": [
+        "Added collapsed variables to select() statement",
+        "Updated covariates definition",
+        "Updated representative_profile"
+      ],
+      "status": "UPDATED - no PPOM changes needed yet (awaiting visual inspection)"
+    },
+    "analysis_protocol_v3.md": {
+      "lines": "234-262",
+      "change": "Added 'KNOWN LIMITATION: ordinal::nominal_test() with categorical predictors' section",
+      "content": "Explains why test fails, documents mitigation strategy, justifies conservative default behavior",
+      "status": "COMPLETE but needs further updates for visual inspection emphasis (tomorrow)"
+    }
   },
 
-  "test_results_and_current_issue": {
-    "isolated_test_simple_data": {
-      "status": "SUCCESS",
-      "setup": "200 obs, y=ordered(1:5), x1/x2=numeric, x3=factor",
-      "results": "Returned p-values: x1=0.632, x2=0.910, x3=0.096",
-      "conclusion": "nominal_test extraction logic works correctly"
-    },
-
-    "isolated_test_step_by_step": {
-      "status": "SUCCESS",
-      "verified": "Each extraction step produces correct values when run in isolation",
-      "test_stats_extraction": "3 rows with non-NA p-values extracted correctly"
-    },
-
-    "rq2_integration_test": {
-      "status": "SUSPICIOUS - likely incorrect",
-      "model_1_separate_items": {
-        "formula": "support.nuclear.strike.on.russia_numeric ~ nw.awareness.1980s_numeric + nw.awareness.recent.academic_numeric + nw.awareness.recent.media_numeric + age + sex + ethnicity + political.affiliation + employment.status + student.status",
-        "sample_size": 1066,
-        "omnibus_p_value": 1.0,
-        "individual_tests": "All returned NA or not displayed",
-        "escalation": "No PPOM (PO holds)",
-        "user_concern": "p=1.0 looks wrong"
+  "test_results_session_5": {
+    "full_pipeline_test": {
+      "command": "Rscript publication_analysis.R",
+      "timestamp": "2025-12-09 20:31:50",
+      "status": "SUCCESS - all RQs completed",
+      "rq1_results": {
+        "sample_size": 1485,
+        "cronbach_alpha": 0.699,
+        "variance_explained": 0.567,
+        "status": "COMPLETE"
       },
-      "model_2_awareness_mean": {
-        "formula": "support.nuclear.strike.on.russia_numeric ~ awareness_mean + age + sex + ethnicity + political.affiliation + employment.status + student.status",
+      "rq2_results": {
         "sample_size": 1066,
-        "omnibus_p_value": 1.0,
-        "individual_tests": "All returned NA or not displayed",
-        "escalation": "No PPOM (PO holds)",
-        "user_concern": "p=1.0 looks wrong"
+        "model1_aic": 2951.06,
+        "model2_aic": 2966.84,
+        "brant_test_p": 1.0,
+        "delta_p_max_cross": 0.0227,
+        "decision": "Awareness mean NOT APPROVED (alpha < 0.70)",
+        "note": "nominal_test still returns p=1.0 despite collapsed variables"
       },
-      "final_results": {
-        "model1_final_type": "POM",
-        "model2_final_type": "POM",
-        "delta_p_max": 0.0177,
-        "awareness_or": 1.062,
-        "awareness_p": 0.4729,
-        "decision": "Awareness mean NOT APPROVED (alpha=0.699 < 0.70)"
+      "rq3_results": {
+        "sample_size": 2213,
+        "treatment_or": 0.928,
+        "treatment_p": 0.3345,
+        "brant_test_p": 1.0,
+        "final_model": "POM (adjusted)",
+        "status": "COMPLETE"
+      },
+      "rq4_results": {
+        "sample_size": 2988,
+        "one_factor_variance": 0.343,
+        "two_factor_variance": 0.616,
+        "three_factor_variance": 0.623,
+        "status": "COMPLETE"
       }
     },
-
-    "discrepancy_identified": {
-      "observation": "Simple test data works, RQ2 data returns p=1.0",
-      "possible_causes": [
-        "Integration issue - something different between isolated test and full pipeline",
-        "verbose=FALSE hiding extraction errors",
-        "clm refit changing model specification subtly",
-        "nominal_test not finding violations that actually exist",
-        "Extraction logic has edge case not tested in simple data",
-        "nrow(test_stats)==0 fallback triggered incorrectly"
-      ],
-      "debugging_needed": "Run perform_brant_test() with verbose=TRUE on RQ2 Model 1 and capture raw nominal_test output"
+    "collapsed_variables_effectiveness": {
+      "convergence": "All models converged successfully",
+      "coefficient_stability": "Confidence intervals narrower and more stable than with original variables",
+      "po_testing": "nominal_test still fails (returns p=1.0), confirming test limitation rather than data issue",
+      "conclusion": "Collapsed variables work well for model estimation, but don't fix automated PO testing"
     }
   },
 
-  "pom_ppom_workflow_architecture": {
-    "workflow_steps": [
-      "1. Fit POM using fit_pom() → MASS::polr()",
-      "2. Test proportional odds using perform_brant_test() → ordinal::nominal_test()",
-      "3. If omnibus_p_value ≤ 0.05: Escalate to PPOM",
-      "4. Fit PPOM using fit_ppom() → VGAM::vglm(cumulative(parallel=FALSE))",
-      "5. Compare predictions: delta_p_max = max(abs(pred_pom - pred_ppom))",
-      "6. Select final: if delta_p_max > 0.03 use PPOM, else use POM (parsimony)",
-      "7. Document decision in markdown and PDF reports"
-    ],
-
-    "decision_thresholds": {
-      "po_test_alpha": 0.05,
-      "delta_p_max_threshold": 0.03,
-      "cronbach_alpha_threshold": 0.70
-    },
-
-    "rq2_analysis_structure": {
-      "section_4_1": "Data assembly (treatment group only, N=1066)",
-      "section_4_2": "Distribution & monotonicity check (quartiles)",
-      "section_4_3a": "Test proportional odds assumption (nominal_test)",
-      "section_4_3b": "PPOM escalation if PO violated",
-      "section_4_3c": "Cross-model comparison (items vs mean)",
-      "section_4_3d": "Model diagnostics (residuals, VIF, plots)",
-      "section_4_3e": "PDF generation (6 pages baseline, +6 if PPOM)",
-      "section_4_4": "Final decision flag (alpha ≥ 0.70 AND delta_p_max ≤ 0.03)",
-      "section_4_5": "Markdown report generation"
-    },
-
-    "file_locations": {
-      "pom_fitting": "R/03_regression_core.R::fit_pom() using MASS::polr()",
-      "ppom_fitting": "R/03_regression_core.R::fit_ppom() using VGAM::vglm()",
-      "po_testing": "R/04_regression_diagnostics.R::perform_brant_test() using ordinal::nominal_test()",
-      "residuals": "R/04_regression_diagnostics.R::calculate_pom_residuals()",
-      "diagnostics": "R/05_plotting.R::plot_pom_diagnostics()",
-      "coefficients": "R/05_plotting.R::plot_pom_coefficients()",
-      "pdf_export": "R/06_pdf_export.R::export functions",
-      "rq2_analysis": "analysis/RQ2_awareness_support.R"
-    }
+  "current_problem_definition_updated": {
+    "main_task": "Implement PPOM for RQ2 based on visual inspection decision",
+    "blocking_issue": "NONE - task simply paused for tomorrow",
+    "solution_approach": "Visual inspection of diagnostic plots instead of automated tests",
+    "rq2_decision_made": "PO assumption violated → use PPOM for all predictors",
+    "implementation_plan": "Documented but not executed (see rq2_ppom_implementation_plan_not_executed)",
+    "tomorrow_priorities": "Decision logging system, single-RQ execution, repo refactor (THEN return to RQ2 PPOM implementation)"
   },
 
-  "packages_status": {
-    "working": {
-      "MASS": "7.3.65 - polr() for POM",
-      "VGAM": "installed - vglm() for PPOM (not yet tested with violations)",
-      "ordinal": "2023.12-4.1 - nominal_test() for PO testing (NEWLY INSTALLED)",
-      "tidyverse": "data manipulation",
-      "gridExtra": "PDF generation",
-      "googlesheets4": "config import"
-    },
-    "abandoned": {
-      "brant": "0.3.0 - has unfixable scoping bug"
-    },
-    "installed_this_session": [
-      "ordinal (2023.12-4.1)",
-      "ucminf (1.2.2 - ordinal dependency)",
-      "numDeriv (2016.8-1.1 - ordinal dependency)"
-    ]
+  "critical_insights_from_session_5": {
+    "insight_1": "Automated PO tests (Brant, nominal_test) fundamentally unreliable with complex categorical models, even after variable collapsing",
+    "insight_2": "Visual inspection of diagnostic plots is standard practice and more trustworthy than automated tests for PO assessment",
+    "insight_3": "Exploratory analysis workflow should be linear narrative, not comparative (no need to keep both POM and PPOM if PPOM is clearly needed)",
+    "insight_4": "Timestamped output folders create clutter in exploratory phase - single output files per RQ more practical",
+    "insight_5": "Decision logging system critical for documenting analytical choices (e.g., 'why PPOM not POM')"
   },
 
-  "key_statistics_rq2": {
-    "sample_size": 1066,
-    "cronbach_alpha": 0.699,
-    "model1_aic": "not recorded in summary",
-    "model2_aic": "not recorded in summary",
-    "awareness_or": 1.062,
-    "awareness_p": 0.4729,
-    "delta_p_max_cross": 0.0177,
-    "po_test_model1_p": 1.0,
-    "po_test_model2_p": 1.0,
-    "final_decision": "Awareness mean NOT APPROVED"
-  },
-
-  "immediate_next_steps_for_continuation": {
-    "priority_1": "Investigate p=1.0 issue",
-    "debugging_approach": [
-      "Run perform_brant_test() on RQ2 Model 1 with verbose=TRUE",
-      "Capture raw nominal_test output before extraction",
-      "Print test_stats dataframe before and after NA filtering",
-      "Check if nrow(test_stats)==0 (triggering fallback p=1.0)",
-      "Compare clm refit to original polr model specifications",
-      "Manually run nominal_test on RQ2 data outside function"
-    ],
-
-    "alternative_solutions": [
-      "Use car::poTest() instead of nominal_test",
-      "Implement manual Brant test from scratch",
-      "Use PPOM anyway based on diagnostic plots alone",
-      "Document limitation and proceed with current implementation"
-    ],
-
-    "ultimate_goal": "Get PPOM escalation pathway working with real proportional odds violations"
+  "files_to_read_first_tomorrow": {
+    "priority_1": "PROTOCOL_SYSTEM_PROMPT.md - reference for decision logging system implementation",
+    "priority_2": "conversation_summary.json - this file, for full context",
+    "priority_3": "analysis_protocol_v3.md - needs updates for visual inspection emphasis",
+    "priority_4": "analysis/RQ2_awareness_support.R - PPOM implementation location"
   },
 
   "git_and_environment": {
     "working_directory": "/home/wnf/code/nw-data-commons-awareness-poll",
-    "git_status": "Clean",
-    "last_commit": "6e2e9a5 'completes refactor by removing duplicated functions from main script'",
+    "git_status": "Modified files: R/02_data_processing.R, publication_analysis.R, analysis/RQ2_awareness_support.R, analysis/RQ3_treatment_effects.R, analysis_protocol_v3.md",
+    "last_commit": "6608b91 'partially updates rq2 analysis; for continuation tomorrow'",
     "main_branch": "main",
     "platform": "linux (WSL2)",
     "os": "Linux 6.6.87.2-microsoft-standard-WSL2",
-    "r_version": "4.5.1"
-  },
-
-  "files_in_project": {
-    "core_scripts": [
-      "publication_analysis.R - main orchestration",
-      "R/00_config.R - package loading, settings",
-      "R/01_validation.R - data validation",
-      "R/02_data_processing.R - data prep functions",
-      "R/03_regression_core.R - fit_pom(), fit_ppom()",
-      "R/04_regression_diagnostics.R - perform_brant_test(), calculate_vif(), residuals",
-      "R/05_plotting.R - diagnostic plots, forest plots",
-      "R/06_pdf_export.R - PDF generation",
-      "R/07_orchestration.R - workflow orchestration"
-    ],
-    "analysis_scripts": [
-      "analysis/RQ1_awareness_structure.R - EFA (COMPLETE)",
-      "analysis/RQ2_awareness_support.R - awareness→support POM/PPOM (CURRENT)",
-      "analysis/RQ3_treatment_effects.R - treatment effects (uses same PO testing)",
-      "analysis/RQ4_decision_factors_structure.R - EFA (COMPLETE)"
-    ],
-    "outputs": "outputs/YYYY-MM-DD HH.MM.SS.SSSSSS/ subdirectories per run"
+    "r_version": "4.5.1",
+    "session_date": "2025-12-09"
   },
 
   "conversation_phase_summary_weighted": {
-    "phase_1_context_5_percent": "Session continuation from previous work on protocol updates and RQ2 implementation",
-    "phase_2_brant_debugging_20_percent": "Extensive debugging of brant package - tested package order, masking, formula construction, data types - all failed. Identified package scoping bug as root cause.",
-    "phase_3_solution_research_10_percent": "Researched alternatives. Found ordinal::nominal_test() as LR-test alternative. Confirmed methodologically sound despite different approach (LR vs Wald).",
-    "phase_4_implementation_25_percent": "Rewrote perform_brant_test() to use nominal_test. Handled formula reconstruction with backticks for ordered(y). Implemented NA filtering. Created omnibus test as min p-value.",
-    "phase_5_testing_isolated_15_percent": "Tested implementation with simple data - SUCCESS. Step-by-step verification - all correct. Formula reconstruction - WORKING. clm refit - WORKING.",
-    "phase_6_integration_testing_15_percent": "Ran full RQ2 analysis. Got p=1.0 for both models. Analysis completed but results questionable. PPOM pathway not tested (no violations detected).",
-    "phase_7_user_concern_10_percent": "User identified issue: 'Something is going wrong'. Requested comprehensive summary for later continuation. Cannot fix now."
+    "phase_1_context_recovery_5_percent": "Read conversation_summary.json from Session 4, understood nominal_test p=1.0 issue",
+    "phase_2_categorical_collapsing_25_percent": "Analyzed high-cardinality variable problem, designed collapsing scheme, implemented create_collapsed_categories() function, updated all affected scripts",
+    "phase_3_testing_collapsed_vars_20_percent": "Ran full pipeline test, verified all RQs complete successfully, confirmed collapsed variables improve stability",
+    "phase_4_nominal_test_limitation_15_percent": "Documented that nominal_test still fails with collapsed variables, concluded automated PO testing unreliable for categorical models",
+    "phase_5_visual_inspection_approach_15_percent": "User clarified: forget automated tests, use visual inspection; RQ2 decision already made (PO violated → PPOM)",
+    "phase_6_rq2_ppom_planning_10_percent": "Created detailed implementation plan for RQ2 PPOM, documented linear narrative structure, specified all predictors flexible",
+    "phase_7_tomorrow_tasks_planning_10_percent": "User specified three priority tasks: decision logging system, single-RQ execution, repo refactor; paused RQ2 implementation"
   },
 
-  "critical_unknowns_requiring_investigation": {
-    "question_1": "Why does nominal_test return p=1.0 for RQ2 data but proper p-values for test data?",
-    "question_2": "Is nrow(test_stats)==0 fallback being triggered incorrectly?",
-    "question_3": "Does clm refit change model specification in subtle way?",
-    "question_4": "Are there actual proportional odds violations in the data that should be detected?",
-    "question_5": "Is verbose=FALSE hiding important extraction errors?"
-  },
-
-  "success_criteria_for_completion": {
-    "requirement_1": "nominal_test returns meaningful p-values (not 1.0) for RQ2 models",
-    "requirement_2": "If PO violated, PPOM escalation triggers correctly",
-    "requirement_3": "PPOM models fit without errors",
-    "requirement_4": "POM vs PPOM predictions compared correctly",
-    "requirement_5": "Final model selection based on delta_p_max threshold",
-    "requirement_6": "PDF includes PPOM pages when applicable",
-    "requirement_7": "Markdown documents all decisions with justifications"
+  "success_criteria_for_tomorrow": {
+    "task_1_decision_logging": {
+      "requirement_1": "Create decision logging system per PROTOCOL_SYSTEM_PROMPT.md",
+      "requirement_2": "Define log file structure and storage location",
+      "requirement_3": "Implement logging functions callable from analysis scripts",
+      "requirement_4": "Document decisions made to date (e.g., RQ2 PPOM decision)"
+    },
+    "task_2_single_rq_execution": {
+      "requirement_1": "Remove timestamped subdirectory creation",
+      "requirement_2": "Update all RQ scripts to write to outputs/RQ#_name.md and outputs/RQ#_diagnostics.pdf",
+      "requirement_3": "Enable running single RQ script independently",
+      "requirement_4": "Test that outputs are overwritten correctly"
+    },
+    "task_3_repo_refactor": {
+      "requirement_1": "Create misc/ directory and move non-production code there",
+      "requirement_2": "Create decision_log/ directory for Task 1 outputs",
+      "requirement_3": "Clean up root directory (remove test scripts)",
+      "requirement_4": "Verify all RQ scripts still run after refactor",
+      "requirement_5": "Update README.md with new structure"
+    },
+    "task_4_return_to_rq2": {
+      "requirement_1": "After Tasks 1-3 complete, implement RQ2 PPOM per plan",
+      "requirement_2": "Generate 6-page PDF with POM and PPOM diagnostics",
+      "requirement_3": "Write linear narrative markdown report",
+      "requirement_4": "Log RQ2 PPOM decision in new decision logging system"
+    }
   },
 
   "metadata_for_context_recovery": {
-    "token_budget_used": "~95000 of 200000",
-    "conversation_length": "Very long - multiple debugging cycles",
-    "primary_accomplishment": "Implemented nominal_test alternative to broken Brant test",
-    "blocking_issue": "Results look incorrect (p=1.0)",
-    "user_state": "Cannot continue debugging now, needs to resume later",
-    "assistant_confidence": "Implementation correct, issue likely integration/extraction related",
-    "estimated_time_to_fix": "30-60 minutes of focused debugging with verbose output"
+    "session_5_token_usage": "~70000 of 200000",
+    "session_5_duration": "~90 minutes",
+    "primary_accomplishment": "Implemented and tested collapsed categorical variables; adopted visual inspection approach for PO testing",
+    "secondary_accomplishment": "Planned tomorrow's three major tasks (decision logging, single-RQ execution, repo refactor)",
+    "user_state": "Clear direction for tomorrow; pausing RQ2 implementation until infrastructure improvements complete",
+    "assistant_confidence": "High - collapsed variables tested successfully, RQ2 plan clear, tomorrow's tasks well-defined"
   }
 }
