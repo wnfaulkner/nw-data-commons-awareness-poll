@@ -13,7 +13,7 @@
 #   - decision.factors.tb (long format, decision factors)
 #   - questions.tb (question metadata)
 #
-# DO NOT add analysis code to this file. Analysis belongs in analysis/RQ*.R
+# DO NOT add analysis code to this file. Analysis belongs in scripts/analysis/RQ*.R
 # ==============================================================================
 
 # 0-SETUP -----------------------------------------------------------------------
@@ -31,14 +31,14 @@ section0.starttime <- sections.all.starttime
 wd <- "/home/wnf/code/nw-data-commons-awareness-poll"
 
 # LOAD MODULES
-source("R/00_config.R")
-source("R/01_validation.R")
-source("R/02_data_processing.R")
-source("R/03_regression_core.R")
-source("R/04_regression_diagnostics.R")
-source("R/05_plotting.R")
-source("R/06_pdf_export.R")
-source("R/07_orchestration.R")
+source("scripts/helper_functions/00_config.R")
+source("scripts/helper_functions/01_validation.R")
+source("scripts/helper_functions/02_data_processing.R")
+source("scripts/helper_functions/03_regression_core.R")
+source("scripts/helper_functions/04_regression_diagnostics.R")
+source("scripts/helper_functions/05_plotting.R")
+source("scripts/helper_functions/06_pdf_export.R")
+source("scripts/helper_functions/07_orchestration.R")
 
 # SECTION CLOCKING
 section0.duration <- Sys.time() - section0.starttime
@@ -429,23 +429,23 @@ cat("===========================================================================
 
 # RQ1: Structure of Nuclear-Winter Awareness
 cat("Starting RQ1: Structure of Nuclear-Winter Awareness...\n")
-source("analysis/RQ1_awareness_structure.R")
+source("scripts/analysis/RQ1_awareness_structure.R")
 
 # RQ2: Awareness as Associational Predictor
 cat("Starting RQ2: Awareness as Associational Predictor...\n")
-source("analysis/RQ2_awareness_support.R")
+source("scripts/analysis/RQ2_awareness_support.R")
 
 # RQ3: Treatment Effects
 cat("Starting RQ3: Treatment Effects...\n")
-source("analysis/RQ3_treatment_effects.R")
+source("scripts/analysis/RQ3_treatment_effects.R")
 
 # RQ4: Decision Factors Structure
 cat("Starting RQ4: Decision Factors Structure...\n")
-source("analysis/RQ4_decision_factors_structure.R")
+source("scripts/analysis/RQ4_decision_factors_structure.R")
 
 # RQ5: Integration & Exploratory (uncomment when ready)
 # cat("Starting RQ5: Integration & Exploratory...\n")
-# source("analysis/RQ5_integration_exploratory.R")
+# source("scripts/analysis/RQ5_integration_exploratory.R")
 
 # ==============================================================================
 # ALL ANALYSES COMPLETE

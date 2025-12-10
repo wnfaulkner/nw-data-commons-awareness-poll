@@ -10,9 +10,8 @@
 #   - RQ2 must be complete (to determine if awareness_mean is valid)
 #   - RQ4 must have human interpretation of factor structure
 #
-# OUTPUTS (in timestamped output folder):
-#   - RQ5_integration.md
-#   - Supporting CSV files
+# OUTPUTS:
+#   - outputs/RQ5_integration.md
 # ==============================================================================
 
 # Check prerequisites
@@ -24,11 +23,13 @@ if (!exists("rq2_awareness_mean_ok_overall")) {
   stop("RQ2 decision flag not found. Please run RQ2_awareness_support.R first.")
 }
 
-# Use output directory from previous RQs
-rq5_dir <- file.path(dirname(rq1_dir), "RQ5_integration_exploratory")
-dir.create(rq5_dir, recursive = TRUE, showWarnings = FALSE)
+# Create output directory (simple, no timestamps)
+output_dir <- "outputs"
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+}
 
-cat("RQ5 output directory:", rq5_dir, "\n")
+cat("RQ5 output directory:", output_dir, "\n")
 
 # ==============================================================================
 # 7.1 Conditional Logic
@@ -49,4 +50,4 @@ cat("(Proceed only after RQ4 human interpretation of factor structure)\n\n")
 
 
 
-cat("\nRQ5 analysis complete. Results saved to:", rq5_dir, "\n")
+cat("\nRQ5 analysis complete. Results saved to:", output_dir, "\n")

@@ -8,8 +8,8 @@
 # PREREQUISITES:
 #   - publication_analysis.R must be run first to create data.tb
 #
-# OUTPUTS (in timestamped output folder):
-#   - RQ1_awareness_structure.md
+# OUTPUTS:
+#   - outputs/RQ1_awareness_structure.md
 # ==============================================================================
 
 # Check prerequisites
@@ -20,15 +20,16 @@ if (!exists("data.tb")) {
 # Load required packages
 library(psych)
 
-# Create output directory
-output_dir <- create_timestamped_output_dir("outputs")
-rq1_dir <- file.path(output_dir, "RQ1_awareness_structure")
-dir.create(rq1_dir, recursive = TRUE, showWarnings = FALSE)
+# Create output directory (simple, no timestamps)
+output_dir <- "outputs"
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+}
 
 cat("\n===============================================================================\n")
 cat("RQ1: STRUCTURE OF NUCLEAR-WINTER AWARENESS\n")
 cat("===============================================================================\n\n")
-cat("Output directory:", rq1_dir, "\n\n")
+cat("Output directory:", output_dir, "\n\n")
 
 # ==============================================================================
 # 3.1 Input Construction
@@ -151,7 +152,7 @@ cat("    Range:", round(min(rq1_awareness_mean$awareness_mean, na.rm = TRUE), 3)
 cat("3.5 Generating markdown report...\n")
 
 # Generate Markdown summary
-md_file <- file.path(rq1_dir, "RQ1_awareness_structure.md")
+md_file <- file.path(output_dir, "RQ1_awareness_structure.md")
 md_content <- c(
   "# RQ1: Structure of Nuclear-Winter Awareness",
   "",
@@ -256,7 +257,7 @@ cat("  - Internal consistency (α):", round(rq1_alpha$total$raw_alpha, 3), "\n")
 cat("  - Variance explained (1-factor):", round(rq1_fa$Vaccounted["Proportion Var", "MR1"] * 100, 1), "%\n")
 cat("  - Awareness mean index: created for", sum(!is.na(rq1_awareness_mean$awareness_mean)), "respondents\n\n")
 
-cat("Output location:", rq1_dir, "\n\n")
+cat("Output file:", md_file, "\n\n")
 
 cat("Next step: Review RQ1_awareness_structure.md, then proceed to RQ2.\n")
 cat("===============================================================================\n\n")

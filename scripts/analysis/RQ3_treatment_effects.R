@@ -8,8 +8,8 @@
 # PREREQUISITES:
 #   - publication_analysis.R must be run first
 #
-# OUTPUTS (in timestamped output folder):
-#   - RQ3_treatment_effects.md
+# OUTPUTS:
+#   - outputs/RQ3_treatment_effects.md
 # ==============================================================================
 
 # Check prerequisites
@@ -17,14 +17,16 @@ if (!exists("data.tb")) {
   stop("data.tb not found. Please run publication_analysis.R first.")
 }
 
-# Use output directory from previous RQs
-rq3_dir <- file.path(dirname(rq1_dir), "RQ3_treatment_effects")
-dir.create(rq3_dir, recursive = TRUE, showWarnings = FALSE)
+# Create output directory (simple, no timestamps)
+output_dir <- "outputs"
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+}
 
 cat("\n===============================================================================\n")
 cat("RQ3: TREATMENT EFFECT OF NUCLEAR-WINTER INFORMATION\n")
 cat("===============================================================================\n\n")
-cat("Output directory:", rq3_dir, "\n\n")
+cat("Output directory:", output_dir, "\n\n")
 
 # ==============================================================================
 # 5.1 Construct Dataset
@@ -271,7 +273,7 @@ cat("    Difference:", round(pred_probs$prob_high_support[1] - pred_probs$prob_h
 
 cat("5.5 Generating markdown report...\n")
 
-md_file <- file.path(rq3_dir, "RQ3_treatment_effects.md")
+md_file <- file.path(output_dir, "RQ3_treatment_effects.md")
 md_content <- c(
   "# RQ3: Treatment Effect of Nuclear-Winter Information",
   "",
@@ -427,7 +429,8 @@ cat("  - Treatment effect (adjusted OR):",
 cat("  - PO assumption:", ifelse(po_violated, "VIOLATED", "HOLDS"), "\n")
 cat("  - Final model:", final_model_name, "\n\n")
 
-cat("Output location:", rq3_dir, "\n\n")
+cat("Output files:\n")
+cat("  -", md_file, "\n\n")
 
 cat("===============================================================================\n\n")
 

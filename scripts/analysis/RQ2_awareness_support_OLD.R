@@ -9,8 +9,9 @@
 #   - publication_analysis.R must be run first
 #   - RQ1_awareness_structure.R must be run first to create awareness_mean
 #
-# OUTPUTS (in timestamped output folder):
-#   - RQ2_awareness_support.md
+# OUTPUTS:
+#   - outputs/RQ2_awareness_support.md
+#   - outputs/RQ2_diagnostics.pdf
 # ==============================================================================
 
 # Check prerequisites
@@ -26,14 +27,16 @@ if (!exists("rq1_alpha")) {
   stop("rq1_alpha not found. Please run RQ1_awareness_structure.R first.")
 }
 
-# Use output directory from RQ1
-rq2_dir <- file.path(dirname(rq1_dir), "RQ2_awareness_support")
-dir.create(rq2_dir, recursive = TRUE, showWarnings = FALSE)
+# Create output directory (simple, no timestamps)
+output_dir <- "outputs"
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+}
 
 cat("\n===============================================================================\n")
 cat("RQ2: USING AWARENESS AS ASSOCIATIONAL PREDICTOR\n")
 cat("===============================================================================\n\n")
-cat("Output directory:", rq2_dir, "\n\n")
+cat("Output directory:", output_dir, "\n\n")
 
 # ==============================================================================
 # 4.1 Data Assembly (Treatment Group Only)
@@ -425,7 +428,7 @@ cat("4.3e Generating comprehensive PDF report...\n")
 # TODO: Expand to include PPOM models if fitted (pages 7-14)
 
 # Create PDF file
-pdf_file <- file.path(rq2_dir, "RQ2_POM_diagnostics.pdf")
+pdf_file <- file.path(output_dir, "RQ2_diagnostics.pdf")
 pdf(pdf_file, width = 11, height = 8.5, onefile = TRUE)
 
 # ==============================================================================
@@ -585,7 +588,7 @@ grid.text(paste("Generated:", format(Sys.time(), "%Y-%m-%d %H:%M")),
 # Close PDF
 dev.off()
 
-cat("  ✓ RQ2_POM_diagnostics.pdf (6 pages: 3 per model)\n\n")
+cat("  ✓ RQ2_diagnostics.pdf (6 pages: 3 per model)\n\n")
 
 # ==============================================================================
 # 4.4 Final Decision Flag
@@ -727,7 +730,7 @@ awareness_items_coefs_display <- model1_items$coefficients %>%
 awareness_mean_coef_display <- model2_mean$coefficients %>%
   filter(variable == "awareness_mean")
 
-md_file <- file.path(rq2_dir, "RQ2_awareness_support.md")
+md_file <- file.path(output_dir, "RQ2_awareness_support.md")
 md_content <- c(
   "# RQ2: Using Awareness as Associational Predictor",
   "",
@@ -853,12 +856,10 @@ cat("  - Awareness mean approved for downstream use:",
     ifelse(rq2_awareness_mean_ok_overall, "YES", "NO"), "\n\n")
 
 cat("Output files:\n")
-cat("  - RQ2_awareness_support.md (primary report - key predictors only)\n")
-cat("  - RQ2_POM_diagnostics.pdf (diagnostic report - full coefficients)\n")
+cat("  -", md_file, "\n")
+cat("  -", pdf_file, "\n")
 cat("  - outputs/RQ2_model_comparison_items_vs_mean.md (archival comparison)\n")
 cat("    NOTE: PDF currently shows POM models only. PPOM pages not yet implemented.\n\n")
-
-cat("Output location:", rq2_dir, "\n\n")
 
 cat("Note: rq2_awareness_mean_ok_overall flag is now available for RQ5.\n")
 cat("===============================================================================\n\n")

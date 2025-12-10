@@ -8,8 +8,8 @@
 # PREREQUISITES:
 #   - publication_analysis.R must be run first
 #
-# OUTPUTS (in timestamped output folder):
-#   - RQ4_decision_factors_structure.md
+# OUTPUTS:
+#   - outputs/RQ4_decision_factors_structure.md
 # ==============================================================================
 
 # Check prerequisites
@@ -23,14 +23,16 @@ if (!requireNamespace("psych", quietly = TRUE)) {
 }
 library(psych)
 
-# Use output directory from previous RQs
-rq4_dir <- file.path(dirname(rq1_dir), "RQ4_decision_factors_structure")
-dir.create(rq4_dir, recursive = TRUE, showWarnings = FALSE)
+# Create output directory (simple, no timestamps)
+output_dir <- "outputs"
+if (!dir.exists(output_dir)) {
+  dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+}
 
 cat("\n===============================================================================\n")
 cat("RQ4: DECISION FACTORS STRUCTURE VIA EFA\n")
 cat("===============================================================================\n\n")
-cat("Output directory:", rq4_dir, "\n\n")
+cat("Output directory:", output_dir, "\n\n")
 
 # ==============================================================================
 # 6.1 Items Construction
@@ -194,7 +196,7 @@ cat("  Factor loadings extracted for all models.\n\n")
 
 cat("6.5 Generating markdown report...\n")
 
-md_file <- file.path(rq4_dir, "RQ4_decision_factors_structure.md")
+md_file <- file.path(output_dir, "RQ4_decision_factors_structure.md")
 md_content <- c(
   "# RQ4: Decision Factors Structure via EFA",
   "",
@@ -327,7 +329,8 @@ cat("  - 1-factor variance explained:", round(rq4_fa1$Vaccounted[2,1] * 100, 1),
 cat("  - 2-factor variance explained:", round(sum(rq4_fa2$Vaccounted[2, 1:2]) * 100, 1), "%\n")
 cat("  - 3-factor variance explained:", round(sum(rq4_fa3$Vaccounted[2, 1:3]) * 100, 1), "%\n\n")
 
-cat("Output location:", rq4_dir, "\n\n")
+cat("Output files:\n")
+cat("  -", md_file, "\n\n")
 
 cat("IMPORTANT: Review RQ4_decision_factors_structure.md for factor interpretation.\n")
 cat("Do not create factor indices until human review is complete.\n")

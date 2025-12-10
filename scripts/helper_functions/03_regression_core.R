@@ -389,9 +389,14 @@ fit_ppom <- function(
                      formula,
                      data,
                      link = "logit",
+                     parallel_spec = FALSE,
                      confidence_level = 0.95,
                      verbose = TRUE
 ) {
+  # parallel_spec: Controls which predictors have flexible coefficients across thresholds
+  #   - FALSE: All predictors flexible (default)
+  #   - TRUE: All predictors constrained (same as POM)
+  #   - Formula (e.g., FALSE ~ x1 + x2): Only x1, x2 flexible; others constrained
   # Load VGAM for vglm (partial proportional odds model)
   if (!requireNamespace("VGAM", quietly = TRUE)) {
     stop("Package 'VGAM' is required for partial proportional odds model. Please install it with: install.packages('VGAM')")
@@ -481,11 +486,20 @@ fit_ppom <- function(
   # Fit the PPOM model
   if (verbose) {
     cat("  Fitting partial proportional odds model (PPOM) with", link, "link...\n")
+    if (is.logical(parallel_spec)) {
+      if (parallel_spec == FALSE) {
+        cat("  Specification: All predictors have flexible (non-proportional) coefficients\n")
+      } else {
+        cat("  Specification: All predictors constrained (proportional odds)\n")
+      }
+    } else {
+      cat("  Specification: Selective flexibility per formula\n")
+    }
   }
 
   model <- tryCatch({
     VGAM::vglm(formula,
-      family = VGAM::cumulative(link = vgam_link, parallel = FALSE),
+      family = VGAM::cumulative(link = vgam_link, parallel = parallel_spec),
       data = data)
   }, error = function(e) {
     stop(paste("PPOM model fitting failed:", e$message))

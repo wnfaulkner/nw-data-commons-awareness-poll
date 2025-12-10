@@ -1,0 +1,417 @@
+{
+  "metadata": {
+    "project": "Nuclear Winter Polling Data - Publication Analysis Pipeline",
+    "protocol_baseline_version": "3.0",
+    "protocol_current_version": "3.8",
+    "created": "2025-12-10T00:00:00Z",
+    "last_updated": "2025-12-10T15:03:48Z",
+    "total_decisions": 8
+  },
+  "decisions": [
+    {
+      "id": "DEC-001",
+      "timestamp": "2025-12-10T12:43:57Z",
+      "stage": "Data Processing - Variable Collapsing",
+      "trigger": {
+        "description": "High-cardinality categorical variables (political.affiliation=11 levels, ethnicity=5 levels) caused convergence issues and unstable coefficient estimates in ordinal regressions",
+        "evidence": {
+          "political_affiliation_original_levels": 11,
+          "ethnicity_original_levels": 5,
+          "convergence_failures": "Multiple models failed to converge",
+          "coefficient_instability": "Wide confidence intervals, unstable estimates"
+        }
+      },
+      "options_considered": [
+        {
+          "option": "Option A: Remove categorical variables from models"
+        },
+        {
+          "option": "Option B: Collapse high-cardinality variables into theoretically justified groups"
+        },
+        {
+          "option": "Option C: Use penalized regression methods (e.g., ridge, lasso)"
+        },
+        {
+          "option": "Option D: Convert to binary indicators (reference vs all others)"
+        }
+      ],
+      "decision": "Option B: Collapse high-cardinality variables into theoretically justified groups",
+      "rationale": "Preserves important demographic covariates while addressing convergence. Groupings based on political alignment theory (left/right/unaffiliated) and sample size. Option A loses important information. Option C adds complexity without addressing root cause. Option D oversimplifies politically meaningful distinctions.",
+      "protocol_impact": {
+        "sections_modified": [
+          "Section 2.2 - Covariates",
+          "Section 0.3 - Key covariates for adjusted models"
+        ],
+        "version_change": "3.0 → 3.1",
+        "methodology_change": "Option B: Collapse high-cardinality variables into theoretically justified groups"
+      },
+      "implementation": {
+        "function_created": "create_collapsed_categories() in R/02_data_processing.R:135-187",
+        "political_affiliation_mapping": "11 levels → 4 levels (Left-leaning, Right-leaning, Unaffiliated/Uncertain, Other)",
+        "ethnicity_mapping": "5 levels → 3 levels (White, Black, Asian & Other)",
+        "scripts_modified": [
+          "R/02_data_processing.R",
+          "publication_analysis.R",
+          "analysis/RQ2_awareness_support.R",
+          "analysis/RQ3_treatment_effects.R"
+        ],
+        "testing_status": "Full pipeline tested successfully (2025-12-09)"
+      }
+    },
+    {
+      "id": "DEC-002",
+      "timestamp": "2025-12-10T12:43:57Z",
+      "stage": "Methodology - Proportional Odds Assumption Testing",
+      "trigger": {
+        "description": "Automated proportional odds tests (Brant test, ordinal::nominal_test) unreliable with complex categorical models, returning NA/p=1.0 even after variable collapsing",
+        "evidence": {
+          "nominal_test_result": "p=1.0 for all predictors (indicates test failure)",
+          "brant_test_result": "Also unreliable with high-dimensional categorical models",
+          "root_cause": "Tests attempt to fit very flexible models with separate coefficients per threshold, causing rank-deficiency",
+          "collapsed_variables_insufficient": "Variable collapsing reduced degrees of freedom but did not fix test failures"
+        }
+      },
+      "options_considered": [
+        {
+          "option": "Option A: Continue using automated tests and accept p=1.0 as 'assumption holds'"
+        },
+        {
+          "option": "Option B: Use visual inspection of diagnostic plots as primary method"
+        },
+        {
+          "option": "Option C: Test PO assumption only for continuous predictors"
+        },
+        {
+          "option": "Option D: Default to PPOM for all models without testing"
+        }
+      ],
+      "decision": "Option B: Use visual inspection of diagnostic plots as primary method",
+      "rationale": "Visual inspection is standard practice in ordinal regression literature and more trustworthy than automated tests for complex models. Automated tests are fundamentally unreliable with categorical predictors. Option A risks false negatives. Option C loses information about categorical predictors. Option D is overly conservative and computationally expensive.",
+      "protocol_impact": {
+        "sections_modified": [
+          "Section 2.1.3 - Proportional odds assumption testing",
+          "Section 2.1 - Ordinal modeling workflow"
+        ],
+        "version_change": "3.1 → 3.2",
+        "methodology_change": "Option B: Use visual inspection of diagnostic plots as primary method"
+      },
+      "implementation": {
+        "visual_criteria_documented": [
+          "Residuals vs fitted: Look for non-parallel patterns across thresholds",
+          "Q-Q plot: Look for threshold-specific deviations",
+          "Scale-location: Look for heteroscedasticity varying by threshold",
+          "Observed vs predicted: Look for systematic miscalibration"
+        ],
+        "workflow_change": "POM → Diagnostics → VISUAL INSPECTION BOOKMARK → (if violated) PPOM → Diagnostics",
+        "protocol_documentation": "Section 2.1.3 limitation documented (analysis_protocol_v3.md:234-262)",
+        "conservative_default": "When test fails, default to POM (more restrictive model)"
+      }
+    },
+    {
+      "id": "DEC-003",
+      "timestamp": "2025-12-10T12:43:57Z",
+      "stage": "RQ2 - Awareness as Predictor",
+      "trigger": {
+        "description": "Visual inspection of POM diagnostic plots revealed proportional odds assumption violations for RQ2 Model 1 (separate awareness items)",
+        "evidence": {
+          "diagnostic_observations": [
+            "Non-parallel residual patterns across support outcome thresholds",
+            "Systematic deviations in Q-Q plot at different thresholds",
+            "Heteroscedasticity patterns varying by threshold in scale-location plot"
+          ],
+          "visual_inspection_decision": "PO assumption violated",
+          "model_specification": "support ~ awareness_1980s + awareness_recent_academic + awareness_recent_media + covariates"
+        }
+      },
+      "options_considered": [
+        {
+          "option": "Option A: Retain POM despite violation (assume mild violation acceptable)"
+        },
+        {
+          "option": "Option B: Use PPOM with all predictors flexible (parallel=FALSE for all)"
+        },
+        {
+          "option": "Option C: Use PPOM with only violating predictors flexible (partial flexibility)"
+        }
+      ],
+      "decision": "Option B: Use PPOM with all predictors flexible (parallel=FALSE for all)",
+      "rationale": "Visual inspection shows violation affects multiple predictors, not just one. Conservative approach: allow all coefficients to vary across thresholds. Simplifies interpretation compared to partial flexibility. Exploratory analysis phase justifies flexibility over parsimony.",
+      "protocol_impact": {
+        "sections_modified": [
+          "Section 2.1.4 - Model escalation: Partial Proportional Odds Model",
+          "Section 5 - RQ2: Using awareness as associational predictor"
+        ],
+        "version_change": "3.2 → 3.3",
+        "methodology_change": "Option B: Use PPOM with all predictors flexible (parallel=FALSE for all)"
+      },
+      "implementation": {
+        "implementation_status": "PLANNED - to be implemented (paused 2025-12-09)",
+        "model_specification": "Model 1 PPOM with parallel=FALSE for all predictors",
+        "expected_output": "6-page PDF: POM diagnostics (pages 1-3), PPOM diagnostics (pages 4-6)",
+        "narrative_structure": "Linear: POM → Visual inspection → PPOM (not comparative reporting)",
+        "script_location": "analysis/RQ2_awareness_support.R"
+      }
+    },
+    {
+      "id": "DEC-004",
+      "timestamp": "2025-12-10T14:36:14Z",
+      "stage": "Repository Organization - Publication-Ready Structure",
+      "trigger": {
+        "description": "Complex timestamped output directories made it difficult to locate current results and track individual RQ outputs. Pipeline reorganization needed for publication preparation.",
+        "evidence": {
+          "previous_structure": "Timestamped subdirectories (e.g., outputs/2025-12-07_20.17.38/) with nested RQ folders",
+          "problem": "Each pipeline run created new timestamped folders, requiring manual search for latest outputs",
+          "rq_dependencies": "RQ scripts referenced previous RQ directories via dirname(rq1_dir), creating brittle dependencies",
+          "helper_function_location": "R/ directory name not descriptive of purpose"
+        }
+      },
+      "options_considered": [
+        {
+          "option": "Option A: Keep timestamped directories, add symlinks to latest"
+        },
+        {
+          "option": "Option B: Single outputs/ directory with overwriting, archive old runs manually"
+        },
+        {
+          "option": "Option C: Hybrid approach with both timestamped and named outputs"
+        }
+      ],
+      "decision": "Option B: Single outputs/ directory with overwriting, archive old runs manually",
+      "rationale": "Direct file outputs (outputs/RQ1_*.md) provide predictable, stable paths for downstream use. Overwriting encourages treating outputs as reproducible artifacts. Old timestamped directories archived to outputs/archive/ for historical reference. Directory reorganization (R/ → scripts/helper_functions/, analysis/ → scripts/analysis/) improves code discoverability and clarifies project structure.",
+      "protocol_impact": {
+        "sections_modified": [
+          "Section 7 - Output Management",
+          "Section 8 - Directory Structure",
+          "All RQ sections (RQ1-RQ5) - output paths updated"
+        ],
+        "version_change": "3.3 → 3.4",
+        "methodology_change": "Option B: Single outputs/ directory with overwriting, archive old runs manually"
+      },
+      "implementation": {
+        "directory_changes": [
+          "R/ → scripts/helper_functions/",
+          "analysis/ → scripts/analysis/"
+        ],
+        "output_pattern_before": "rq#_dir <- file.path(dirname(rq1_dir), \"RQ#_name\")",
+        "output_pattern_after": "output_dir <- \"outputs\"; md_file <- file.path(output_dir, \"RQ#_name.md\")",
+        "scripts_modified": [
+          "scripts/analysis/RQ1_awareness_structure.R",
+          "scripts/analysis/RQ2_awareness_support.R",
+          "scripts/analysis/RQ3_treatment_effects.R",
+          "scripts/analysis/RQ4_decision_factors_structure.R",
+          "scripts/analysis/RQ5_integration_exploratory.R",
+          "publication_analysis.R (all source() paths updated)"
+        ],
+        "cleanup": [
+          "Created misc/ directory for test scripts",
+          "Moved check_category_sizes.R, test_brant*.R, test_nominal*.R to misc/",
+          "Archived 40+ old timestamped directories to outputs/archive/"
+        ],
+        "testing_status": "Full pipeline tested successfully (2025-12-10)"
+      }
+    },
+    {
+      "id": "DEC-005",
+      "timestamp": "2025-12-10T14:36:55Z",
+      "stage": "Methodology - Visual Inspection Implementation for POM Assumption",
+      "trigger": {
+        "description": "DEC-002 established visual inspection as primary method for PO assumption testing, but protocol lacks operational details for implementation. Analysts need concrete criteria for evaluating diagnostic plots and making escalation decisions.",
+        "evidence": {
+          "dec002_decision": "Visual inspection selected as primary method over automated tests",
+          "current_protocol_gap": "Section 2.1.3 mentions visual criteria but lacks step-by-step decision rules",
+          "implementation_need": "RQ2 PPOM escalation (DEC-003) was based on visual inspection but process not fully documented",
+          "analyst_feedback": "Need clear guidelines for when visual patterns constitute assumption violation"
+        }
+      },
+      "options_considered": [
+        {
+          "option": "Option A: Minimal update - add 1-2 paragraphs describing visual patterns"
+        },
+        {
+          "option": "Option B: Comprehensive protocol - detailed inspection criteria, decision flowchart, threshold guidelines"
+        },
+        {
+          "option": "Option C: Automated scoring - create numerical scoring system for visual patterns"
+        }
+      ],
+      "decision": "Option B: Comprehensive protocol - detailed inspection criteria, decision flowchart, threshold guidelines",
+      "rationale": "Visual inspection requires subjective judgment; comprehensive written protocol ensures consistency across analyses. Option A insufficient for reproducibility. Option C conflicts with DEC-002 rationale that automated methods are unreliable. Detailed guidelines balance flexibility (visual assessment) with rigor (systematic criteria).",
+      "protocol_impact": {
+        "sections_modified": [
+          "Section 2.1.3 - Proportional odds assumption testing",
+          "Section 2.1.2 - Diagnostic phase (cross-reference to visual criteria)",
+          "All ordinal regression sections (RQ2, RQ3, RQ5) - implementation guidance"
+        ],
+        "version_change": "3.4 → 3.5",
+        "methodology_change": "Option B: Comprehensive protocol - detailed inspection criteria, decision flowchart, threshold guidelines"
+      },
+      "implementation": {
+        "new_subsection": "Section 2.1.3a - Visual Inspection Protocol for Proportional Odds Assumption",
+        "inspection_criteria": {
+          "residuals_vs_fitted": "Non-parallel patterns across thresholds indicate violation",
+          "qq_plot": "Threshold-specific deviations from normality suggest non-proportional effects",
+          "scale_location": "Heteroscedasticity varying by threshold violates assumption",
+          "observed_vs_predicted": "Systematic miscalibration at specific support levels indicates violation"
+        },
+        "decision_flowchart": {
+          "step1": "Generate 4-panel diagnostic plots for POM",
+          "step2": "Inspect each panel for threshold-specific patterns",
+          "step3": "If ≥2 panels show clear violation patterns → Escalate to PPOM",
+          "step4": "If 1 panel shows mild violation → Run Brant test as tiebreaker",
+          "step5": "If 0 panels show violation → Retain POM (confirm with Brant test)"
+        },
+        "severity_thresholds": {
+          "clear_violation": "Obvious non-parallel patterns, large systematic deviations",
+          "mild_violation": "Subtle patterns, small deviations, ambiguous interpretation",
+          "no_violation": "Random scatter, parallel patterns, good model fit"
+        },
+        "integration_with_brant": "Visual inspection FIRST, Brant test as confirmatory or tiebreaker",
+        "documentation_requirement": "All RQ markdown outputs must include visual inspection decision alongside Brant results"
+      }
+    },
+    {
+      "id": "DEC-006",
+      "timestamp": "2025-12-10T15:02:47Z",
+      "stage": "RQ2 - Model Selection (Items vs Mean Index)",
+      "trigger": {
+        "description": "RQ2 analysis compared two model specifications: Model 1 (separate awareness items) vs Model 2 (awareness mean index). After fitting both POM models and examining diagnostics, decision needed on which specification to use for final inference.",
+        "evidence": {
+          "model1_specification": "support ~ awareness_1980s + awareness_recent_academic + awareness_recent_media + covariates",
+          "model2_specification": "support ~ awareness_mean + covariates",
+          "cronbach_alpha": "RQ1 established α ≥ 0.70 (mean index has acceptable reliability)",
+          "theoretical_consideration": "Separate items capture distinct temporal dimensions of awareness (1980s, recent academic, recent media)",
+          "prior_rq2_analysis": "Both models fitted as POM; visual inspection revealed PO violations for Model 1"
+        }
+      },
+      "options_considered": [
+        {
+          "option": "Option A: Use Model 2 (awareness mean index) - simpler, single coefficient"
+        },
+        {
+          "option": "Option B: Use Model 1 (separate awareness items) - captures temporal/source distinctions"
+        },
+        {
+          "option": "Option C: Present both models and interpret differences"
+        }
+      ],
+      "decision": "Option B: Use Model 1 (separate awareness items)",
+      "rationale": "Separate awareness items provide richer theoretical interpretation by distinguishing 1980s awareness (historical knowledge) from recent academic awareness (scientific literature) and recent media awareness (public discourse). Though mean index has acceptable reliability, temporal/source distinctions are substantively meaningful for understanding nuclear winter awareness structure. PPOM will be fitted for Model 1 to address proportional odds violations.",
+      "protocol_impact": {
+        "sections_modified": [
+          "Section 5 - RQ2: Using awareness as associational predictor",
+          "Section 5.3 - Check B: Item-wise vs mean model comparison",
+          "Section 5.5 - Outputs (Model 2 no longer reported)"
+        ],
+        "version_change": "3.5 → 3.6",
+        "methodology_change": "Option B: Use Model 1 (separate awareness items)"
+      },
+      "implementation": {
+        "model1_status": "Selected for PPOM fitting and final inference",
+        "model2_status": "Fitted as POM for comparison, not reported in final outputs",
+        "downstream_impact": "RQ5 exploratory models will use separate awareness items (not mean index)",
+        "rq2_flag_override": "rq2_awareness_mean_ok_overall = FALSE (use separate items)",
+        "script_updates_needed": "Remove Model 2 from final RQ2 markdown output; streamline to Model 1 only"
+      }
+    },
+    {
+      "id": "DEC-007",
+      "timestamp": "2025-12-10T15:03:17Z",
+      "stage": "Methodology - Human Visual Inspection Workflow and Brant Test Role",
+      "trigger": {
+        "description": "DEC-005 established comprehensive visual inspection criteria but maintained Brant test in workflow. In practice, visual inspection by trained analyst provides definitive assessment of PO violations. Automated Brant test adds unnecessary computational overhead and potential confusion when results conflict with visual assessment.",
+        "evidence": {
+          "dec005_protocol": "Established visual inspection as PRIMARY method with detailed criteria",
+          "rq2_visual_inspection_findings": [
+            "Residuals vs Fitted: Strong nonlinear pattern (rising then bending), violates latent-linearity",
+            "Q-Q Plot: Severe broken stick pattern with heavy tails, indicates mis-specified latent distribution",
+            "Scale-Location: Upward trend shows heteroskedasticity, violates constant variance assumption",
+            "Observed vs Predicted: Narrow clustering, poor threshold fit, substantial PO violations"
+          ],
+          "analyst_decision": "Clear PO violations across all 4 diagnostic plots → Escalate to PPOM",
+          "brant_test_issues": "Unreliable with categorical predictors (DEC-002); provides no additional value when visual inspection is definitive",
+          "workflow_efficiency": "Human pause for visual inspection already interrupts automated workflow; Brant test adds delay without benefit"
+        }
+      },
+      "options_considered": [
+        {
+          "option": "Option A: Keep Brant test as tiebreaker when visual inspection ambiguous"
+        },
+        {
+          "option": "Option B: Bypass Brant test entirely; rely solely on human visual inspection decision"
+        },
+        {
+          "option": "Option C: Run Brant test in background but do not use results for decision-making"
+        }
+      ],
+      "decision": "Option B: Bypass Brant test entirely; rely solely on human visual inspection decision",
+      "rationale": "When trained analyst performs systematic visual inspection per DEC-005 protocol and reaches definitive conclusion (≥2 plots show clear violation), Brant test provides no additional information. Brant test is unreliable with categorical predictors (DEC-002) and cannot override expert visual assessment. Workflow efficiency improved by eliminating redundant computation. Protocol updated to: (1) Pause after POM fitting for human visual inspection, (2) Analyst documents findings per Section 2.1.3a template, (3) Analyst decides POM vs PPOM, (4) Log decision and proceed with selected model.",
+      "protocol_impact": {
+        "sections_modified": [
+          "Section 2.1.3 - Proportional odds assumption testing",
+          "Section 2.1.3a - Visual Inspection Protocol",
+          "Section 2.1.3b - Brant Test (now optional/deprecated for complex models)",
+          "All RQ sections with ordinal regression (RQ2, RQ3, RQ5)"
+        ],
+        "version_change": "3.6 → 3.7",
+        "methodology_change": "Option B: Bypass Brant test entirely; rely solely on human visual inspection decision"
+      },
+      "implementation": {
+        "workflow_change": {
+          "step1": "Fit POM model",
+          "step2": "Generate 4-panel diagnostic plots",
+          "step3": "PAUSE: Human analyst performs visual inspection per Section 2.1.3a",
+          "step4": "Analyst documents findings in decision log",
+          "step5": "If PO violated: Fit PPOM with specified flexibility",
+          "step6": "If PO holds: Retain POM and proceed"
+        },
+        "brant_test_status": "Optional for documentation purposes only; not used for decision-making",
+        "human_pause_points": "Added to protocol at end of Section 2.1.2 (after POM diagnostics generated)",
+        "decision_logging_requirement": "Visual inspection decision must be logged as SUBSTANTIVE when PO violated",
+        "script_updates": "Remove conditional Brant test logic from RQ2; replace with documented visual inspection decision"
+      }
+    },
+    {
+      "id": "DEC-008",
+      "timestamp": "2025-12-10T15:03:48Z",
+      "stage": "Output Structure - Linear Narrative for Progressive Model Development",
+      "trigger": {
+        "description": "Current protocol specifies separate comparison files (e.g., RQ2_model_comparison_items_vs_mean.md) and extensive PDF diagnostics with side-by-side comparisons. During iterative model development, maintaining multiple synchronized files creates overhead and potential inconsistencies. Single linear narrative documents model progression more naturally.",
+        "evidence": {
+          "current_rq2_outputs": "RQ2_awareness_support.md (key results), RQ2_model_comparison_items_vs_mean.md (archival), RQ2_diagnostics.pdf (6+ pages)",
+          "model_development_workflow": "POM → Visual inspection → PPOM fitting → Final model selection occurs sequentially",
+          "iterative_analysis_pattern": "Analyst refines model specification (e.g., variable collapsing, PPOM flexibility) across multiple runs",
+          "file_synchronization_burden": "Updating multiple files after each model iteration increases error risk and maintenance complexity",
+          "publication_output_preference": "Single comprehensive document per RQ suitable for supplementary materials"
+        }
+      },
+      "options_considered": [
+        {
+          "option": "Option A: Keep separate files (main results, comparison, diagnostics PDF)"
+        },
+        {
+          "option": "Option B: Single markdown file with linear narrative (POM → PPOM progression)"
+        },
+        {
+          "option": "Option C: Single markdown with embedded diagnostic plots (no separate PDF)"
+        }
+      ],
+      "decision": "Option B: Single markdown file with linear narrative (POM → PPOM progression)",
+      "rationale": "Linear narrative structure naturally documents model development sequence: (1) POM fitting and diagnostics, (2) Visual inspection findings, (3) PPOM escalation rationale, (4) PPOM results, (5) Final model selection. Single file simplifies maintenance during iterative refinement and provides complete analytical story. PDF diagnostics retained for detailed visual inspection but referenced from markdown rather than duplicating content. Eliminates archival comparison files (e.g., model_comparison_items_vs_mean.md) that duplicate information.",
+      "protocol_impact": {
+        "sections_modified": ["Section 2.1.7 - PDF diagnostic report requirements", "Section 5.5 - RQ2 Outputs (file structure)", "Section 6.5 - RQ3 Outputs (file structure)", "Section 8.3 - RQ5 Outputs (file structure)", "All RQ output specifications"],
+        "version_change": "3.7 → 3.8",
+        "methodology_change": "Option B: Single markdown file with linear narrative (POM → PPOM progression)"
+      },
+      "implementation": {
+        "file_structure": {
+          "outputs/RQ2_awareness_support.md": "Single comprehensive file with linear narrative",
+          "outputs/RQ2_diagnostics.pdf": "Retained for detailed visual inspection (referenced from markdown)"
+        },
+        "markdown_sections": ["1. Overview", "2. Data Assembly", "3. Model 1 POM: Initial Fitting", "4. Visual Inspection Results (per DEC-007)", "5. Model 1 PPOM: Addressing PO Violations", "6. Final Model Selection", "7. Interpretation", "8. Covariates Table (full coefficients)"],
+        "removed_files": ["RQ2_model_comparison_items_vs_mean.md (archival comparison - information integrated into main file)", "Separate Model 2 reporting (per DEC-006)"],
+        "pdf_structure_unchanged": "Still provides coefficient tables, forest plots, and 4-panel diagnostics per model",
+        "cross_rq_consistency": "Apply same linear narrative structure to RQ3, RQ5"
+      }
+    }
+  ]
+}
