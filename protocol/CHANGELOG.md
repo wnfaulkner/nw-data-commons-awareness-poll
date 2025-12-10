@@ -70,6 +70,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   - **Rationale:** Linear narrative structure naturally documents model development sequence: (1) POM fitting and diagnostics, (2) Visual inspection findings, (3) PPOM escalation rationale, (4) PPOM results, (5) Final model selection. Single file simplifies maintenance during iterative refinement and provides complete analytical story. PDF diagnostics retained for detailed visual inspection but referenced from markdown rather than duplicating content. Eliminates archival comparison files (e.g., model_comparison_items_vs_mean.md) that duplicate information.
   - **Impact:** Protocol sections Section 2.1.7 - PDF diagnostic report requirements, Section 5.5 - RQ2 Outputs (file structure), Section 6.5 - RQ3 Outputs (file structure), Section 8.3 - RQ5 Outputs (file structure), All RQ output specifications
 
+
+### Changed
+- Complex abstracted helper functions (fit_ppom, fit_pom) made it difficult to quickly inspect and verify analysis code. With decision to run fewer models per RQ (Model 1 only per DEC-006), extensive abstraction no longer necessary. ([DEC-009])
+  - **Decision:** Option B: Direct implementation in RQ scripts
+  - **Rationale:** Transparency is critical for reproducibility and verification. Direct VGAM code in RQ2 script makes analysis immediately inspectable. Separating analysis (top) from reporting (bottom) allows running analysis independently. With only 1 model per RQ, abstraction overhead not justified. Creates run_analyses.R for easy individual RQ execution.
+  - **Impact:** Protocol sections All RQ sections - script organization, Section 0 - Computational environment (orchestration), Section 2.1 - Ordinal modeling workflow (direct VGAM implementation)
+
 ## [3.0] - 2025-12-07
 
 ### Added

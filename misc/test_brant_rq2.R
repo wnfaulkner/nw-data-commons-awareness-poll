@@ -3,11 +3,11 @@
 # ==============================================================================
 
 # Load necessary packages and functions
-source("R/00_config.R")
-source("R/01_validation.R")
-source("R/02_data_processing.R")
-source("R/03_regression_core.R")
-source("R/04_regression_diagnostics.R")
+source("scripts/c.helper_functions/00_config.R")
+source("scripts/c.helper_functions/01_validation.R")
+source("scripts/c.helper_functions/02_data_processing.R")
+source("scripts/c.helper_functions/03_regression_core.R")
+source("scripts/c.helper_functions/04_regression_diagnostics.R")
 
 # Suppress messages for cleaner output
 suppressMessages({

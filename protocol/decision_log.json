@@ -2,10 +2,10 @@
   "metadata": {
     "project": "Nuclear Winter Polling Data - Publication Analysis Pipeline",
     "protocol_baseline_version": "3.0",
-    "protocol_current_version": "3.8",
+    "protocol_current_version": "3.9",
     "created": "2025-12-10T00:00:00Z",
-    "last_updated": "2025-12-10T15:03:48Z",
-    "total_decisions": 8
+    "last_updated": "2025-12-10T16:00:53Z",
+    "total_decisions": 9
   },
   "decisions": [
     {
@@ -398,7 +398,13 @@
       "decision": "Option B: Single markdown file with linear narrative (POM → PPOM progression)",
       "rationale": "Linear narrative structure naturally documents model development sequence: (1) POM fitting and diagnostics, (2) Visual inspection findings, (3) PPOM escalation rationale, (4) PPOM results, (5) Final model selection. Single file simplifies maintenance during iterative refinement and provides complete analytical story. PDF diagnostics retained for detailed visual inspection but referenced from markdown rather than duplicating content. Eliminates archival comparison files (e.g., model_comparison_items_vs_mean.md) that duplicate information.",
       "protocol_impact": {
-        "sections_modified": ["Section 2.1.7 - PDF diagnostic report requirements", "Section 5.5 - RQ2 Outputs (file structure)", "Section 6.5 - RQ3 Outputs (file structure)", "Section 8.3 - RQ5 Outputs (file structure)", "All RQ output specifications"],
+        "sections_modified": [
+          "Section 2.1.7 - PDF diagnostic report requirements",
+          "Section 5.5 - RQ2 Outputs (file structure)",
+          "Section 6.5 - RQ3 Outputs (file structure)",
+          "Section 8.3 - RQ5 Outputs (file structure)",
+          "All RQ output specifications"
+        ],
         "version_change": "3.7 → 3.8",
         "methodology_change": "Option B: Single markdown file with linear narrative (POM → PPOM progression)"
       },
@@ -407,11 +413,61 @@
           "outputs/RQ2_awareness_support.md": "Single comprehensive file with linear narrative",
           "outputs/RQ2_diagnostics.pdf": "Retained for detailed visual inspection (referenced from markdown)"
         },
-        "markdown_sections": ["1. Overview", "2. Data Assembly", "3. Model 1 POM: Initial Fitting", "4. Visual Inspection Results (per DEC-007)", "5. Model 1 PPOM: Addressing PO Violations", "6. Final Model Selection", "7. Interpretation", "8. Covariates Table (full coefficients)"],
-        "removed_files": ["RQ2_model_comparison_items_vs_mean.md (archival comparison - information integrated into main file)", "Separate Model 2 reporting (per DEC-006)"],
+        "markdown_sections": [
+          "1. Overview",
+          "2. Data Assembly",
+          "3. Model 1 POM: Initial Fitting",
+          "4. Visual Inspection Results (per DEC-007)",
+          "5. Model 1 PPOM: Addressing PO Violations",
+          "6. Final Model Selection",
+          "7. Interpretation",
+          "8. Covariates Table (full coefficients)"
+        ],
+        "removed_files": [
+          "RQ2_model_comparison_items_vs_mean.md (archival comparison - information integrated into main file)",
+          "Separate Model 2 reporting (per DEC-006)"
+        ],
         "pdf_structure_unchanged": "Still provides coefficient tables, forest plots, and 4-panel diagnostics per model",
         "cross_rq_consistency": "Apply same linear narrative structure to RQ3, RQ5"
       }
+    },
+    {
+      "id": "DEC-009",
+      "timestamp": "2025-12-10T16:00:53Z",
+      "stage": "RQ2_implementation",
+      "trigger": {
+        "description": "Complex abstracted helper functions (fit_ppom, fit_pom) made it difficult to quickly inspect and verify analysis code. With decision to run fewer models per RQ (Model 1 only per DEC-006), extensive abstraction no longer necessary.",
+        "evidence": [
+          "RQ2 script uses fit_ppom() wrapper hiding VGAM implementation details",
+          "Analysis and reporting code interleaved, making inspection difficult",
+          "Helper functions designed for multiple model types, but only 1 model used",
+          "User feedback: need to quickly run and check analysis code separately from outputs"
+        ]
+      },
+      "options_considered": [
+        {
+          "option": "Option A: Keep current abstraction with fit_ppom/fit_pom helper functions"
+        },
+        {
+          "option": "Option B: Write PPOM/POM code directly in RQ scripts with minimal abstraction; separate analysis from reporting"
+        },
+        {
+          "option": "Option C: Hybrid approach - keep some helpers but simplify and separate analysis/reporting"
+        }
+      ],
+      "decision": "Option B: Direct implementation in RQ scripts",
+      "rationale": "Transparency is critical for reproducibility and verification. Direct VGAM code in RQ2 script makes analysis immediately inspectable. Separating analysis (top) from reporting (bottom) allows running analysis independently. With only 1 model per RQ, abstraction overhead not justified. Creates run_analyses.R for easy individual RQ execution.",
+      "protocol_impact": {
+        "sections_modified": ["All RQ sections - script organization", "Section 0 - Computational environment (orchestration)", "Section 2.1 - Ordinal modeling workflow (direct VGAM implementation)"],
+        "version_change": "3.8 → 3.9",
+        "methodology_change": "Option B: Direct implementation in RQ scripts"
+      },
+      "implementation": [
+        "Reorganize RQ2_awareness_support.R: analysis code top, reporting code bottom",
+        "Replace fit_ppom() call with direct VGAM::vglm() implementation in RQ2",
+        "Create run_analyses.R orchestration script with boolean flags for each RQ",
+        "Update protocol to reflect direct implementation approach"
+      ]
     }
   ]
 }

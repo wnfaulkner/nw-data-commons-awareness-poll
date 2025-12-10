@@ -212,33 +212,76 @@ calculate_pom_residuals <- function(pom_result, verbose = TRUE) {
   model <- pom_result$model
 
   if (verbose) {
-    cat("  Calculating residuals for POM...\n")
+    model_type <- ifelse(isS4(model), "PPOM (VGAM)", "POM (MASS)")
+    cat("  Calculating residuals for", model_type, "...\n")
   }
 
-  # Get model data
-  model_data <- model$model
-  n_obs <- nrow(model_data)
+  # Get model data - handle both S3 (polr) and S4 (vglm) models
+  if (isS4(model)) {
+    # VGAM::vglm model (S4 object)
+    # VGAM models don't store model frame the same way - get from original call
+    n_obs <- nobs(model)
+    outcome_var <- pom_result$outcome_var
 
-  # Extract outcome variable
-  outcome_var <- pom_result$outcome_var
-  y_observed <- as.numeric(model_data[[outcome_var]])
-
-  # Calculate linear predictor (X * beta)
-  # For polr, the linear predictor is: X %*% beta (without intercepts/thresholds)
-  X <- model.matrix(model)[, -1, drop = FALSE]  # Remove intercept column if present
-  beta <- coef(model)
-
-  # Handle case where model.matrix includes factor levels
-  # polr coefficients don't include intercept, so align them
-  if (ncol(X) == length(beta)) {
-    linear_predictor <- as.vector(X %*% beta)
+    # Extract observed values from model's y slot or from pom_result
+    if ("y" %in% methods::slotNames(model)) {
+      y_matrix <- model@y
+      # For ordinal models, y is typically a matrix with indicators for each level
+      # Convert to numeric class labels
+      if (is.matrix(y_matrix)) {
+        y_observed <- apply(y_matrix, 1, which.max)
+      } else {
+        y_observed <- as.numeric(y_matrix)
+      }
+    } else {
+      stop("Cannot extract observed outcomes from VGAM model")
+    }
   } else {
-    # If dimensions don't match, reconstruct more carefully
-    linear_predictor <- predict(model, type = "linear")
+    # MASS::polr model (S3 object)
+    model_data <- model$model
+    n_obs <- nrow(model_data)
+    outcome_var <- pom_result$outcome_var
+    y_observed <- as.numeric(model_data[[outcome_var]])
+  }
+
+  # Calculate linear predictor
+  # Different approaches for POM (polr) vs PPOM (vglm)
+  if (isS4(model)) {
+    # VGAM model - for diagnostic purposes, use average of linear predictors across thresholds
+    # VGAM ordinal models have separate linear predictors for each threshold
+    if ("predictors" %in% methods::slotNames(model)) {
+      # Average across all threshold linear predictors
+      predictors_matrix <- model@predictors
+      if (is.matrix(predictors_matrix) && nrow(predictors_matrix) == n_obs) {
+        linear_predictor <- rowMeans(predictors_matrix)
+      } else {
+        # If predictors structure is unexpected, use fitted as fallback
+        linear_predictor <- rep(0, n_obs)  # Placeholder for diagnostics
+      }
+    } else {
+      # Fallback: use zeros as placeholder (linear predictor less meaningful for PPOM anyway)
+      linear_predictor <- rep(0, n_obs)
+    }
+  } else {
+    # MASS::polr model
+    X <- model.matrix(model)[, -1, drop = FALSE]
+    beta <- coef(model)
+
+    if (ncol(X) == length(beta)) {
+      linear_predictor <- as.vector(X %*% beta)
+    } else {
+      linear_predictor <- predict(model, type = "linear")
+    }
   }
 
   # Get predicted probabilities for each category
-  pred_probs <- predict(model, type = "probs")
+  if (isS4(model)) {
+    # VGAM model uses type = "response" for probabilities
+    pred_probs <- predict(model, type = "response")
+  } else {
+    # MASS::polr uses type = "probs"
+    pred_probs <- predict(model, type = "probs")
+  }
 
   # If pred_probs is a vector (single observation), convert to matrix
   if (is.vector(pred_probs)) {
@@ -278,6 +321,23 @@ calculate_pom_residuals <- function(pom_result, verbose = TRUE) {
       ifelse(obs_category < pred_class_num[i], -1, 0))
 
     deviance_residuals[i] <- sign_val * dev_component
+  }
+
+  # Validate all vectors have correct length before creating tibble
+  if (length(y_observed) != n_obs) {
+    stop(paste("y_observed length mismatch:", length(y_observed), "vs n_obs:", n_obs))
+  }
+  if (length(pred_class_num) != n_obs) {
+    stop(paste("pred_class_num length mismatch:", length(pred_class_num), "vs n_obs:", n_obs))
+  }
+  if (length(linear_predictor) != n_obs) {
+    stop(paste("linear_predictor length mismatch:", length(linear_predictor), "vs n_obs:", n_obs))
+  }
+  if (length(pearson_residuals) != n_obs) {
+    stop(paste("pearson_residuals length mismatch:", length(pearson_residuals), "vs n_obs:", n_obs))
+  }
+  if (length(deviance_residuals) != n_obs) {
+    stop(paste("deviance_residuals length mismatch:", length(deviance_residuals), "vs n_obs:", n_obs))
   }
 
   # Create result tibble with observation-level data

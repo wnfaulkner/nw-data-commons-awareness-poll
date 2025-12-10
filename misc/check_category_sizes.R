@@ -6,7 +6,7 @@ suppressMessages({
 })
 
 # Load config
-source("R/00_config.R")
+source("scripts/c.helper_functions/00_config.R")
 
 gs4_deauth()
 data.tb <- read_sheet(sheets.id, sheet = "data")
