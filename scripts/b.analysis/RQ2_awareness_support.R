@@ -29,8 +29,7 @@
 #   - rq1_awareness_mean must exist (RQ1 must run first)
 #
 # OUTPUTS:
-#   - outputs/RQ2_awareness_support.md
-#   - outputs/RQ2_diagnostics.pdf
+#   - outputs/RQ2_awareness_support.md (single comprehensive markdown file)
 # ==============================================================================
 
 # Check prerequisites
@@ -78,13 +77,13 @@ cat("Output directory:", output_dir, "\n\n")
 cat("1.1 Assembling data (treatment group only)...\n")
 
 rq2_data <- data.tb %>%
-  left_join(rq1_awareness_mean, by = "participant.id") %>%
-  filter(
+  dplyr::left_join(rq1_awareness_mean, by = "participant.id") %>%
+  dplyr::filter(
     shown.infographic == "Shown NW Iinfographic",
     !is.na(support.nuclear.strike.on.russia_numeric),
     !is.na(awareness_mean)
   ) %>%
-  select(
+  dplyr::select(
     participant.id,
     support.nuclear.strike.on.russia_numeric,
     nw.awareness.1980s_numeric,
@@ -95,7 +94,7 @@ rq2_data <- data.tb %>%
     ethnicity.collapsed, political.affiliation.collapsed,
     employment.status, student.status
   ) %>%
-  drop_na()
+  tidyr::drop_na()
 
 n_obs <- nrow(rq2_data)
 cat("  Sample size (complete cases):", n_obs, "\n")
@@ -104,7 +103,7 @@ cat("  Treatment group only (shown infographic)\n\n")
 
 # Awareness distribution summary
 awareness_summary <- rq2_data %>%
-  summarise(
+  dplyr::summarise(
     mean = mean(awareness_mean, na.rm = TRUE),
     sd = sd(awareness_mean, na.rm = TRUE),
     min = min(awareness_mean, na.rm = TRUE),
@@ -370,7 +369,7 @@ cat("1.7 Comparing POM vs PPOM predictions...\n")
 
 # Create representative prediction data
 representative_profile <- rq2_data %>%
-  summarise(
+  dplyr::summarise(
     age = median(age, na.rm = TRUE),
     sex = names(sort(table(sex), decreasing = TRUE))[1],
     ethnicity.collapsed = names(sort(table(ethnicity.collapsed),
@@ -395,7 +394,7 @@ pred_data <- data.frame(
   nw.awareness.recent.academic_numeric = awareness_range,
   nw.awareness.recent.media_numeric = awareness_range
 ) %>%
-  bind_cols(representative_profile[rep(1, nrow(.)), ])
+  dplyr::bind_cols(representative_profile[rep(1, nrow(.)), ])
 
 # Get predictions from both models
 preds_pom_compare <- predict(model_pom, newdata = pred_data, type = "probs")
@@ -430,88 +429,12 @@ cat("PART 2: GENERATING REPORTS\n")
 cat("=", rep("=", 78), "\n\n", sep = "")
 
 # ------------------------------------------------------------------------------
-# 2.1 Generate Diagnostic Plots
+# 2.1 Generate Comprehensive Markdown Report
 # ------------------------------------------------------------------------------
 
-cat("2.1 Generating diagnostic plots...\n")
+cat("2.1 Generating comprehensive markdown report...\n")
 
-# Helper function to create 4-panel diagnostic plots
-create_diagnostic_plots <- function(residuals_df, model_name) {
-  # Plot 1: Residuals vs Fitted
-  p1 <- ggplot(residuals_df, aes(x = linear_predictor,
-                                  y = deviance_residual)) +
-    geom_point(alpha = 0.3) +
-    geom_smooth(se = TRUE, color = "red") +
-    geom_hline(yintercept = 0, linetype = "dashed") +
-    labs(
-      title = paste(model_name, "- Residuals vs Fitted"),
-      x = "Linear Predictor",
-      y = "Deviance Residuals"
-    ) +
-    theme_minimal()
-
-  # Plot 2: Q-Q Plot
-  p2 <- ggplot(residuals_df, aes(sample = deviance_residual)) +
-    stat_qq() +
-    stat_qq_line(color = "red") +
-    labs(
-      title = paste(model_name, "- Normal Q-Q"),
-      x = "Theoretical Quantiles",
-      y = "Sample Quantiles"
-    ) +
-    theme_minimal()
-
-  # Plot 3: Scale-Location
-  p3 <- ggplot(residuals_df, aes(x = linear_predictor,
-                                  y = sqrt(abs(deviance_residual)))) +
-    geom_point(alpha = 0.3) +
-    geom_smooth(se = TRUE, color = "red") +
-    labs(
-      title = paste(model_name, "- Scale-Location"),
-      x = "Linear Predictor",
-      y = expression(sqrt("|Deviance Residuals|"))
-    ) +
-    theme_minimal()
-
-  # Plot 4: Observed vs Predicted
-  p4 <- ggplot(residuals_df, aes(x = predicted_class, y = observed)) +
-    geom_jitter(alpha = 0.2, width = 0.1, height = 0.1) +
-    geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
-    labs(
-      title = paste(model_name, "- Observed vs Predicted"),
-      x = "Predicted Class",
-      y = "Observed Class"
-    ) +
-    theme_minimal()
-
-  # Combine into 4-panel layout
-  gridExtra::grid.arrange(p1, p2, p3, p4, ncol = 2)
-}
-
-# Generate plots (will be used in PDF)
-diag_plots_pom <- create_diagnostic_plots(residuals_pom, "POM")
-diag_plots_ppom <- create_diagnostic_plots(residuals_ppom, "PPOM")
-
-cat("  ✓ Diagnostic plots generated\n\n")
-
-# ------------------------------------------------------------------------------
-# 2.2 Create PDF Report
-# ------------------------------------------------------------------------------
-
-cat("2.2 Creating PDF diagnostics report...\n")
-
-pdf_file <- file.path(output_dir, "RQ2_diagnostics.pdf")
-pdf(pdf_file, width = 11, height = 8.5, onefile = TRUE)
-
-# Page 1: POM Coefficients Table
-grid.newpage()
-grid.text("Model 1 POM: Separate Awareness Items",
-  x = 0.5, y = 0.97, gp = gpar(fontsize = 14, fontface = "bold"))
-grid.text("Proportional Odds Model - Coefficients Table",
-  x = 0.5, y = 0.94, gp = gpar(fontsize = 11, col = "gray30"))
-grid.lines(x = c(0.05, 0.95), y = c(0.92, 0.92), gp = gpar(lwd = 2))
-
-# Extract coefficients from POM
+# Extract POM coefficients for markdown
 coef_summary_pom <- summary(model_pom)$coefficients
 coef_df_pom <- data.frame(
   variable = rownames(coef_summary_pom),
@@ -521,111 +444,14 @@ coef_df_pom <- data.frame(
   stringsAsFactors = FALSE
 )
 
-# Filter out intercepts (thresholds)
+# Filter out intercepts for coefficient table
 n_levels <- length(levels(rq2_data$outcome_ordered))
 n_thresholds <- n_levels - 1
-if (nrow(coef_df_pom) > n_thresholds) {
-  coef_df_pom <- coef_df_pom[1:(nrow(coef_df_pom) - n_thresholds), ]
-}
+coef_df_pom_predictors <- coef_df_pom[1:(nrow(coef_df_pom) - n_thresholds), ]
 
-y_pos <- 0.85
-grid.text("Model Fit Statistics:", x = 0.1, y = y_pos, just = "left",
-  gp = gpar(fontsize = 11, fontface = "bold"))
-y_pos <- y_pos - 0.03
-grid.text(paste0("AIC: ", round(aic_pom, 2), "  |  BIC: ",
-                 round(bic_pom, 2), "  |  N = ", n_obs),
-  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
-
-y_pos <- y_pos - 0.05
-grid.text("Coefficients:", x = 0.1, y = y_pos, just = "left",
-  gp = gpar(fontsize = 11, fontface = "bold"))
-y_pos <- y_pos - 0.03
-
-for (i in seq_len(min(nrow(coef_df_pom), 10))) {
-  text_line <- sprintf("%s: β = %.3f (SE = %.3f)",
-                       coef_df_pom$variable[i],
-                       coef_df_pom$estimate[i],
-                       coef_df_pom$std_error[i])
-  grid.text(text_line, x = 0.12, y = y_pos, just = "left",
-    gp = gpar(fontsize = 9))
-  y_pos <- y_pos - 0.025
-}
-
-grid.text(paste("Generated:", format(Sys.time(), "%Y-%m-%d %H:%M")),
-  x = 0.5, y = 0.02, gp = gpar(fontsize = 8, col = "gray50"))
-
-# Page 2: POM Diagnostic Plots
-grid.newpage()
-grid.text("Model 1 POM: Diagnostic Plots",
-  x = 0.5, y = 0.97, gp = gpar(fontsize = 14, fontface = "bold"))
-grid.text("VIOLATIONS DETECTED - See visual inspection findings",
-  x = 0.5, y = 0.94, gp = gpar(fontsize = 11, col = "red"))
-grid.lines(x = c(0.05, 0.95), y = c(0.92, 0.92), gp = gpar(lwd = 2))
-
-vp2 <- viewport(x = 0.5, y = 0.48, width = 0.90, height = 0.85)
-pushViewport(vp2)
-print(diag_plots_pom, newpage = FALSE)
-popViewport()
-
-grid.text(paste("Generated:", format(Sys.time(), "%Y-%m-%d %H:%M")),
-  x = 0.5, y = 0.02, gp = gpar(fontsize = 8, col = "gray50"))
-
-# Page 3: PPOM Coefficients Table
-grid.newpage()
-grid.text("Model 1 PPOM: Awareness Variables Flexible",
-  x = 0.5, y = 0.97, gp = gpar(fontsize = 14, fontface = "bold"))
-grid.text("Partial Proportional Odds Model - Coefficients",
-  x = 0.5, y = 0.94, gp = gpar(fontsize = 11, col = "gray30"))
-grid.lines(x = c(0.05, 0.95), y = c(0.92, 0.92), gp = gpar(lwd = 2))
-
-y_pos <- 0.85
-grid.text("Model Fit Statistics:", x = 0.1, y = y_pos, just = "left",
-  gp = gpar(fontsize = 11, fontface = "bold"))
-y_pos <- y_pos - 0.03
-grid.text(paste0("AIC: ", round(aic_ppom, 2), "  |  BIC: ",
-                 round(bic_ppom, 2), "  |  N = ", n_obs),
-  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 10))
-
-y_pos <- y_pos - 0.05
-grid.text("Specification:", x = 0.1, y = y_pos, just = "left",
-  gp = gpar(fontsize = 11, fontface = "bold"))
-y_pos <- y_pos - 0.03
-grid.text("Awareness variables have threshold-varying coefficients",
-  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 9))
-y_pos <- y_pos - 0.025
-grid.text("Covariates constrained (proportional odds)",
-  x = 0.12, y = y_pos, just = "left", gp = gpar(fontsize = 9))
-
-grid.text(paste("Generated:", format(Sys.time(), "%Y-%m-%d %H:%M")),
-  x = 0.5, y = 0.02, gp = gpar(fontsize = 8, col = "gray50"))
-
-# Page 4: PPOM Diagnostic Plots
-grid.newpage()
-grid.text("Model 1 PPOM: Diagnostic Plots",
-  x = 0.5, y = 0.97, gp = gpar(fontsize = 14, fontface = "bold"))
-grid.text("Final Model",
-  x = 0.5, y = 0.94, gp = gpar(fontsize = 11, col = "darkgreen"))
-grid.lines(x = c(0.05, 0.95), y = c(0.92, 0.92), gp = gpar(lwd = 2))
-
-vp4 <- viewport(x = 0.5, y = 0.48, width = 0.90, height = 0.85)
-pushViewport(vp4)
-print(diag_plots_ppom, newpage = FALSE)
-popViewport()
-
-grid.text(paste("Generated:", format(Sys.time(), "%Y-%m-%d %H:%M")),
-  x = 0.5, y = 0.02, gp = gpar(fontsize = 8, col = "gray50"))
-
-dev.off()
-
-cat("  ✓ RQ2_diagnostics.pdf (4 pages)\n")
-cat("    - Pages 1-2: Model 1 POM\n")
-cat("    - Pages 3-4: Model 1 PPOM (final model)\n\n")
-
-# ------------------------------------------------------------------------------
-# 2.3 Generate Markdown Narrative
-# ------------------------------------------------------------------------------
-
-cat("2.3 Generating markdown narrative...\n")
+# Extract PPOM coefficients summary
+coef_summary_ppom <- summary(model_ppom)@coef3
+ppom_coef_text <- paste(capture.output(print(coef_summary_ppom)), collapse = "\n")
 
 md_file <- file.path(output_dir, "RQ2_awareness_support.md")
 md_content <- c(
@@ -654,16 +480,31 @@ md_content <- c(
   paste0("- **Complete cases**: ", n_obs),
   paste0("- **Awareness mean**: ", round(awareness_summary$mean, 2),
          " (SD = ", round(awareness_summary$sd, 2), ")"),
+  paste0("- **Awareness range**: ", round(awareness_summary$min, 2),
+         " to ", round(awareness_summary$max, 2)),
   "",
   "---",
   "",
   "## Section 2: POM (MASS::polr)",
   "",
-  "### Model Fit",
+  "### Model Fit Statistics",
   "",
   paste0("- **AIC**: ", round(aic_pom, 2)),
   paste0("- **BIC**: ", round(bic_pom, 2)),
   paste0("- **Log-likelihood**: ", round(loglik_pom, 2)),
+  paste0("- **N**: ", n_obs),
+  "",
+  "### Coefficients (Proportional Odds Assumption)",
+  "",
+  "| Variable | Estimate | Std. Error | t-value |",
+  "|----------|----------|------------|---------|",
+  unlist(lapply(1:nrow(coef_df_pom_predictors), function(i) {
+    sprintf("| %s | %.4f | %.4f | %.4f |",
+            coef_df_pom_predictors$variable[i],
+            coef_df_pom_predictors$estimate[i],
+            coef_df_pom_predictors$std_error[i],
+            coef_df_pom_predictors$t_value[i])
+  })),
   "",
   "### Residual Diagnostics",
   "",
@@ -676,18 +517,39 @@ md_content <- c(
   "",
   "---",
   "",
-  "## Section 3: Visual Inspection",
+  "## Section 3: Visual Inspection Results",
   "",
-  "**Per DEC-007**: Analyst performed systematic visual inspection",
+  "**Protocol**: Per DEC-007, systematic visual inspection using 4-panel diagnostics",
   "",
-  "### Results",
+  "### Findings",
   "",
-  "1. **Residuals vs Fitted**: CLEAR VIOLATION (nonlinear pattern)",
-  "2. **Q-Q Plot**: CLEAR VIOLATION (broken stick pattern)",
-  "3. **Scale-Location**: CLEAR VIOLATION (heteroskedasticity)",
-  "4. **Observed vs Predicted**: CLEAR VIOLATION (poor fit)",
+  "1. **Residuals vs Fitted**: CLEAR VIOLATION",
+  "   - Strong nonlinear pattern (rising sharply, then bending downward)",
+  "   - Violates latent-linearity assumption",
+  "   - Indicates threshold-specific effects",
   "",
-  "**Decision**: 4/4 plots violated → **ESCALATE TO PPOM**",
+  "2. **Normal Q-Q Plot**: CLEAR VIOLATION",
+  "   - Severe 'broken stick' pattern with heavy tails",
+  "   - Flat midsections indicate non-normality",
+  "   - Latent distribution mis-specified",
+  "",
+  "3. **Scale-Location Plot**: CLEAR VIOLATION",
+  "   - Upward trend in smoothed line",
+  "   - Heteroskedasticity (variance increases with predictor)",
+  "   - Violates constant variance assumption",
+  "",
+  "4. **Observed vs Predicted**: CLEAR VIOLATION",
+  "   - Predicted classes cluster too narrowly",
+  "   - Underprediction of high-support categories",
+  "   - Points stray from diagonal, indicating poor threshold fit",
+  "",
+  "### Decision",
+  "",
+  "**Result**: 4/4 diagnostic plots show CLEAR violations of proportional odds assumption",
+  "",
+  "**Action**: ESCALATE TO PPOM (per Section 2.1.3a protocol)",
+  "",
+  "**Note**: Brant test bypassed per DEC-007 (visual inspection definitive)",
   "",
   "---",
   "",
@@ -695,15 +557,26 @@ md_content <- c(
   "",
   "### Specification",
   "",
-  "- **Flexible**: Awareness variables (1980s, academic, media)",
-  "- **Constrained**: Covariates (age, sex, ethnicity, politics, etc.)",
-  "- **Rationale**: Targeted flexibility for primary predictors",
+  "- **Flexible predictors**: Awareness variables (1980s, academic, media)",
+  "  - Coefficients vary across support thresholds",
+  "- **Constrained predictors**: Covariates (age, sex, ethnicity, politics, employment, student status)",
+  "  - Proportional odds constraint maintained for parsimony",
+  "- **Rationale**: Targeted flexibility for primary predictors; computational stability",
   "",
-  "### Model Fit",
+  "### Model Fit Statistics",
   "",
   paste0("- **AIC**: ", round(aic_ppom, 2)),
   paste0("- **BIC**: ", round(bic_ppom, 2)),
   paste0("- **Log-likelihood**: ", round(loglik_ppom, 2)),
+  paste0("- **N**: ", n_obs),
+  "",
+  "### Coefficients Summary",
+  "",
+  "```",
+  strsplit(ppom_coef_text, "\n")[[1]],
+  "```",
+  "",
+  "**Interpretation**: Awareness variables have threshold-varying effects, allowing different associations at different levels of support for nuclear retaliation.",
   "",
   "### Residual Diagnostics",
   "",
@@ -716,27 +589,55 @@ md_content <- c(
   "",
   "---",
   "",
-  "## Section 5: Model Comparison",
+  "## Section 5: Model Comparison (POM vs PPOM)",
   "",
-  paste0("- **Δp_max**: ", sprintf("%.4f", delta_p_max)),
-  "- **Threshold**: 0.03",
+  "### Predicted Probability Comparison",
+  "",
+  paste0("- **Maximum absolute difference (Δp_max)**: ", sprintf("%.4f", delta_p_max)),
+  "- **Threshold for meaningful difference**: 0.03",
   "",
   ifelse(delta_p_max > 0.03,
-    paste0("- **Result**: Δp_max > 0.03 → PPOM meaningfully different"),
-    paste0("- **Result**: Δp_max ≤ 0.03 → Similar, but violations clear")
+    "- **Interpretation**: Δp_max > 0.03 → PPOM provides meaningfully different predictions from POM",
+    "- **Interpretation**: Δp_max ≤ 0.03 → Similar predictions, but visual violations are clear"
   ),
   "",
-  paste0("**Final model**: ", final_model_type),
+  "### Model Selection",
+  "",
+  paste0("**Final model selected**: ", final_model_type),
+  "",
+  ifelse(final_model_type == "PPOM",
+    c("**Justification**: Clear proportional odds violations detected via visual inspection.",
+      "PPOM addresses threshold-specific effects of awareness variables."),
+    c("**Justification**: Proportional odds assumption holds based on visual inspection.",
+      "POM retained for parsimony.")
+  ),
+  "",
+  "### Model Comparison Table",
+  "",
+  "| Metric | POM | PPOM | Difference |",
+  "|--------|-----|------|------------|",
+  paste0("| AIC | ", round(aic_pom, 2), " | ", round(aic_ppom, 2),
+         " | ", round(aic_ppom - aic_pom, 2), " |"),
+  paste0("| BIC | ", round(bic_pom, 2), " | ", round(bic_ppom, 2),
+         " | ", round(bic_ppom - bic_pom, 2), " |"),
+  paste0("| Log-likelihood | ", round(loglik_pom, 2), " | ", round(loglik_ppom, 2),
+         " | ", round(loglik_ppom - loglik_pom, 2), " |"),
   "",
   "---",
   "",
-  "## References",
+  "## Decision Log References",
   "",
-  "- DEC-001: Variable collapsing for convergence",
-  "- DEC-006: Model 1 (separate items) only",
-  "- DEC-007: Visual inspection definitive; Brant bypassed",
-  "- DEC-008: Linear narrative output",
-  "- DEC-009: Direct implementation; minimal abstraction",
+  "- **DEC-001**: Variable collapsing for convergence (political affiliation: 11→4 levels; ethnicity: 5→3 levels)",
+  "- **DEC-006**: Model 1 (separate awareness items) selected over mean index",
+  "- **DEC-007**: Visual inspection workflow; Brant test bypassed as unreliable with categorical predictors",
+  "- **DEC-008**: Linear narrative output structure (POM → visual inspection → PPOM)",
+  "- **DEC-009**: Direct VGAM/MASS implementation; minimal abstraction for transparency",
+  "",
+  "---",
+  "",
+  "## Downstream Flag",
+  "",
+  paste0("**rq2_awareness_mean_ok_overall**: FALSE (use separate items in RQ5)"),
   "",
   "---",
   "",
@@ -763,9 +664,8 @@ cat("  - PPOM: Awareness variables flexible, covariates constrained\n")
 cat("  - Δp_max (POM vs PPOM):", sprintf("%.4f", delta_p_max), "\n")
 cat("  - Final model:", final_model_type, "\n\n")
 
-cat("Output files:\n")
-cat("  -", md_file, "\n")
-cat("  -", pdf_file, "\n\n")
+cat("Output file:\n")
+cat("  -", md_file, "\n\n")
 
 cat("Downstream flag:\n")
 cat("  - rq2_awareness_mean_ok_overall = FALSE (use separate items)\n\n")

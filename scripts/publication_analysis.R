@@ -393,7 +393,7 @@ export.ls <-
     }
   ) %>%
   purrr::compact() %>% # Remove NULL entries for non-existent tibbles
-  lapply(., function(x) {x %>% select(-any_of(c("q.num", "q.id", "q.theme")))}) # Remove q.num and q.id if they exist in any table
+  lapply(., function(x) {x %>% dplyr::select(-dplyr::any_of(c("q.num", "q.id", "q.theme")))}) # Remove q.num and q.id if they exist in any table
 
 names(export.ls) <- clean_table_names[clean_object_names %in% ls()]
 

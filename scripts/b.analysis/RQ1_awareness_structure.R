@@ -40,15 +40,15 @@ cat("3.1 Constructing input data...\n")
 # Filter for treatment group only (those who saw awareness questions)
 # Use numeric versions of awareness variables
 rq1_awareness_items <- data.tb %>%
-  filter(shown.infographic == "Shown NW Iinfographic") %>%
-  select(
+  dplyr::filter(shown.infographic == "Shown NW Iinfographic") %>%
+  dplyr::select(
     participant.id,
     nw.awareness.1980s_numeric,
     nw.awareness.recent.academic_numeric,
     nw.awareness.recent.media_numeric
   ) %>%
   # Remove rows with all missing awareness data
-  filter(!is.na(nw.awareness.1980s_numeric) |
+  dplyr::filter(!is.na(nw.awareness.1980s_numeric) |
          !is.na(nw.awareness.recent.academic_numeric) |
          !is.na(nw.awareness.recent.media_numeric))
 
@@ -63,7 +63,7 @@ cat("3.2 Computing diagnostics...\n")
 
 # Prepare matrix without participant.id for analysis
 awareness_matrix <- rq1_awareness_items %>%
-  select(-participant.id) %>%
+  dplyr::select(-participant.id) %>%
   as.matrix()
 
 # Cronbach's alpha
@@ -125,19 +125,19 @@ cat("3.4 Creating awareness mean index...\n")
 
 # Create mean index (raw scale 1-4)
 rq1_awareness_mean <- rq1_awareness_items %>%
-  mutate(
+  dplyr::mutate(
     awareness_mean = rowMeans(
-      select(., nw.awareness.1980s_numeric,
+      dplyr::select(., nw.awareness.1980s_numeric,
              nw.awareness.recent.academic_numeric,
              nw.awareness.recent.media_numeric),
       na.rm = TRUE
     )
   ) %>%
-  select(participant.id, awareness_mean)
+  dplyr::select(participant.id, awareness_mean)
 
 # Create standardized version
 rq1_awareness_mean <- rq1_awareness_mean %>%
-  mutate(awareness_mean_z = as.vector(scale(awareness_mean)))
+  dplyr::mutate(awareness_mean_z = as.vector(scale(awareness_mean)))
 
 cat("  Awareness mean index created.\n")
 cat("    Mean (raw scale):", round(mean(rq1_awareness_mean$awareness_mean, na.rm = TRUE), 3), "\n")
