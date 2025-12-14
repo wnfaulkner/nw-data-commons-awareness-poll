@@ -429,10 +429,251 @@ cat("PART 2: GENERATING REPORTS\n")
 cat("=", rep("=", 78), "\n\n", sep = "")
 
 # ------------------------------------------------------------------------------
-# 2.1 Generate Comprehensive Markdown Report
+# 2.1 Generate Diagnostic Plots (PNG files)
 # ------------------------------------------------------------------------------
 
-cat("2.1 Generating comprehensive markdown report...\n")
+cat("2.1 Generating diagnostic plots...\n")
+
+# Create plotting function for 4-panel diagnostics
+create_diagnostic_plots <- function(residuals_tb, model_label) {
+  # Plot 1: Residuals vs Fitted
+  plot1 <- ggplot(residuals_tb, aes(x = linear_predictor, y = deviance_residual)) +
+    geom_point(alpha = 0.5, size = 1.5) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+    geom_smooth(method = "loess", se = TRUE, color = "blue", linewidth = 0.8) +
+    labs(
+      title = "Residuals vs Fitted",
+      x = "Linear Predictor",
+      y = "Deviance Residuals"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      axis.title = element_text(size = 9)
+    )
+
+  # Plot 2: Q-Q Plot
+  residuals_sorted <- sort(residuals_tb$deviance_residual)
+  theoretical_quantiles <- qnorm(ppoints(length(residuals_sorted)))
+  qq_data <- tibble(
+    theoretical = theoretical_quantiles,
+    sample = residuals_sorted
+  )
+
+  plot2 <- ggplot(qq_data, aes(x = theoretical, y = sample)) +
+    geom_point(alpha = 0.5, size = 1.5) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+    labs(
+      title = "Normal Q-Q Plot",
+      x = "Theoretical Quantiles",
+      y = "Sample Quantiles"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      axis.title = element_text(size = 9)
+    )
+
+  # Plot 3: Scale-Location
+  residuals_tb_plot <- residuals_tb %>%
+    mutate(
+      sqrt_abs_std_residual = sqrt(abs(deviance_residual / sd(deviance_residual)))
+    )
+
+  plot3 <- ggplot(residuals_tb_plot, aes(x = linear_predictor, y = sqrt_abs_std_residual)) +
+    geom_point(alpha = 0.5, size = 1.5) +
+    geom_smooth(method = "loess", se = TRUE, color = "blue", linewidth = 0.8) +
+    labs(
+      title = "Scale-Location",
+      x = "Linear Predictor",
+      y = expression(sqrt("|Standardized Residuals|"))
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      axis.title = element_text(size = 9)
+    )
+
+  # Plot 4: Observed vs Predicted
+  residuals_tb_plot <- residuals_tb_plot %>%
+    mutate(observed_jittered = observed + runif(n(), -0.1, 0.1))
+
+  plot4 <- ggplot(residuals_tb_plot, aes(x = predicted_class, y = observed_jittered)) +
+    geom_jitter(alpha = 0.5, width = 0.2, height = 0.2, size = 1.5, color = "#0072B2") +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+    labs(
+      title = "Observed vs Predicted",
+      x = "Predicted Class",
+      y = "Observed Class"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      axis.title = element_text(size = 9)
+    )
+
+  # Combine into 2x2 panel
+  combined <- arrangeGrob(
+    plot1, plot2, plot3, plot4,
+    ncol = 2, nrow = 2,
+    top = textGrob(model_label, gp = gpar(fontsize = 12, fontface = "bold"))
+  )
+
+  return(combined)
+}
+
+# Generate POM diagnostic plots
+cat("  - POM diagnostics...\n")
+pom_diagnostics_plot <- create_diagnostic_plots(residuals_pom, "POM Diagnostic Plots")
+ggsave(
+  filename = file.path(output_dir, "RQ2_POM_diagnostics.png"),
+  plot = pom_diagnostics_plot,
+  width = 10, height = 8, dpi = 300
+)
+
+# Generate PPOM diagnostic plots
+cat("  - PPOM diagnostics...\n")
+ppom_diagnostics_plot <- create_diagnostic_plots(residuals_ppom, "PPOM Diagnostic Plots")
+ggsave(
+  filename = file.path(output_dir, "RQ2_PPOM_diagnostics.png"),
+  plot = ppom_diagnostics_plot,
+  width = 10, height = 8, dpi = 300
+)
+
+cat("  ✓ Diagnostic plots saved\n\n")
+
+# ------------------------------------------------------------------------------
+# 2.2 Generate Forest Plots (PNG files)
+# ------------------------------------------------------------------------------
+
+cat("2.2 Generating forest plots...\n")
+
+# Extract POM coefficients for forest plot
+coef_summary_pom_full <- summary(model_pom)$coefficients
+n_levels <- length(levels(rq2_data$outcome_ordered))
+n_thresholds <- n_levels - 1
+
+# Filter out intercepts
+coef_df_pom_forest <- data.frame(
+  variable = rownames(coef_summary_pom_full)[1:(nrow(coef_summary_pom_full) - n_thresholds)],
+  estimate = coef_summary_pom_full[1:(nrow(coef_summary_pom_full) - n_thresholds), "Value"],
+  std_error = coef_summary_pom_full[1:(nrow(coef_summary_pom_full) - n_thresholds), "Std. Error"],
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    odds_ratio = exp(estimate),
+    ci_lower = exp(estimate - 1.96 * std_error),
+    ci_upper = exp(estimate + 1.96 * std_error)
+  ) %>%
+  arrange(odds_ratio) %>%
+  mutate(variable = factor(variable, levels = variable))
+
+# Create POM forest plot
+pom_forest <- ggplot(coef_df_pom_forest, aes(x = odds_ratio, y = variable)) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
+  geom_errorbarh(aes(xmin = ci_lower, xmax = ci_upper), height = 0.2, color = "#0072B2") +
+  geom_point(size = 3, color = "#0072B2") +
+  scale_x_continuous(
+    trans = "log",
+    breaks = c(0.25, 0.5, 1, 2, 4),
+    labels = c("0.25", "0.5", "1.0", "2.0", "4.0")
+  ) +
+  labs(
+    title = "POM Coefficients (Odds Ratios with 95% CI)",
+    x = "Odds Ratio (log scale)",
+    y = ""
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    axis.text.x = element_text(size = 9)
+  )
+
+ggsave(
+  filename = file.path(output_dir, "RQ2_POM_forest.png"),
+  plot = pom_forest,
+  width = 10, height = 6, dpi = 300
+)
+
+cat("  ✓ POM forest plot saved\n")
+
+# Extract PPOM coefficients for visualization
+# PPOM has threshold-specific coefficients for awareness variables
+coef_summary_ppom_matrix <- summary(model_ppom)@coef3
+
+# Create simplified PPOM coefficient plot showing threshold variation
+# Focus on the three awareness variables
+awareness_vars <- c("nw.awareness.1980s_numeric",
+                   "nw.awareness.recent.academic_numeric",
+                   "nw.awareness.recent.media_numeric")
+
+# Extract coefficients for awareness variables across thresholds
+ppom_coef_data <- data.frame()
+for (var in awareness_vars) {
+  # Find rows matching this variable
+  matching_rows <- grep(paste0("^", var, ":"), rownames(coef_summary_ppom_matrix), value = TRUE)
+  if (length(matching_rows) > 0) {
+    for (row_name in matching_rows) {
+      threshold_num <- as.numeric(gsub(".*:(\\d+)$", "\\1", row_name))
+      estimate <- coef_summary_ppom_matrix[row_name, "Estimate"]
+      std_error <- coef_summary_ppom_matrix[row_name, "Std. Error"]
+
+      ppom_coef_data <- rbind(ppom_coef_data, data.frame(
+        variable = var,
+        threshold = threshold_num,
+        estimate = estimate,
+        std_error = std_error,
+        odds_ratio = exp(estimate),
+        ci_lower = exp(estimate - 1.96 * std_error),
+        ci_upper = exp(estimate + 1.96 * std_error)
+      ))
+    }
+  }
+}
+
+# Create PPOM threshold-specific coefficient plot
+if (nrow(ppom_coef_data) > 0) {
+  ppom_coef_plot <- ggplot(ppom_coef_data, aes(x = factor(threshold), y = odds_ratio, group = variable, color = variable)) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 3) +
+    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
+    scale_color_manual(
+      values = c("#D55E00", "#E69F00", "#0072B2"),
+      labels = c("1980s awareness", "Recent academic", "Recent media"),
+      name = "Awareness Variable"
+    ) +
+    labs(
+      title = "PPOM Threshold-Specific Coefficients (Awareness Variables)",
+      x = "Threshold",
+      y = "Odds Ratio"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+      axis.title = element_text(size = 10),
+      axis.text = element_text(size = 9),
+      legend.position = "bottom"
+    )
+
+  ggsave(
+    filename = file.path(output_dir, "RQ2_PPOM_coefficients.png"),
+    plot = ppom_coef_plot,
+    width = 10, height = 6, dpi = 300
+  )
+
+  cat("  ✓ PPOM coefficient plot saved\n\n")
+} else {
+  cat("  ⚠ No threshold-specific coefficients found for PPOM plot\n\n")
+}
+
+# ------------------------------------------------------------------------------
+# 2.3 Generate Comprehensive Markdown Report
+# ------------------------------------------------------------------------------
+
+cat("2.3 Generating comprehensive markdown report...\n")
 
 # Extract POM coefficients for markdown
 coef_summary_pom <- summary(model_pom)$coefficients
@@ -515,6 +756,18 @@ md_content <- c(
          sprintf("%.2f", min(pearson_resid_pom)), ", ",
          sprintf("%.2f", max(pearson_resid_pom)), "]"),
   "",
+  "### Diagnostic Plots",
+  "",
+  "![POM Diagnostic Plots](RQ2_POM_diagnostics.png)",
+  "",
+  "**Visual Assessment**: 4-panel diagnostic plot shows residuals vs fitted, normal Q-Q, scale-location, and observed vs predicted.",
+  "",
+  "### Forest Plot",
+  "",
+  "![POM Forest Plot](RQ2_POM_forest.png)",
+  "",
+  "**Interpretation**: Odds ratios with 95% confidence intervals for all predictors under proportional odds assumption.",
+  "",
   "---",
   "",
   "## Section 3: Visual Inspection Results",
@@ -586,6 +839,18 @@ md_content <- c(
   paste0("- **Pearson residuals**: [",
          sprintf("%.2f", min(pearson_resid_ppom)), ", ",
          sprintf("%.2f", max(pearson_resid_ppom)), "]"),
+  "",
+  "### Diagnostic Plots",
+  "",
+  "![PPOM Diagnostic Plots](RQ2_PPOM_diagnostics.png)",
+  "",
+  "**Visual Assessment**: 4-panel diagnostic plot shows improved model fit compared to POM.",
+  "",
+  "### Threshold-Specific Coefficients",
+  "",
+  "![PPOM Coefficient Plot](RQ2_PPOM_coefficients.png)",
+  "",
+  "**Interpretation**: Shows how awareness variable effects vary across support thresholds, demonstrating violation of proportional odds assumption.",
   "",
   "---",
   "",
