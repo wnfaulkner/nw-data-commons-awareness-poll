@@ -9,13 +9,27 @@
 #   - publication_analysis.R must be run first
 #
 # OUTPUTS:
-#   - outputs/RQ3_treatment_effects.md
+#   - outputs/RQ3_treatment_effects.md (comprehensive markdown with embedded plots)
+#   - outputs/RQ3_POM_diagnostics.png (4-panel diagnostic plots)
+#   - outputs/RQ3_POM_forest.png (forest plot of coefficients)
 # ==============================================================================
 
 # Check prerequisites
 if (!exists("data.tb")) {
   stop("data.tb not found. Please run publication_analysis.R first.")
 }
+
+# Load required packages
+suppressMessages({
+  library(MASS)
+  library(VGAM)
+  library(dplyr)
+  library(tidyr)
+  library(tibble)
+  library(ggplot2)
+  library(gridExtra)
+  library(grid)
+})
 
 # Create output directory (simple, no timestamps)
 output_dir <- "outputs"
@@ -35,11 +49,11 @@ cat("Output directory:", output_dir, "\n\n")
 cat("5.1 Constructing dataset...\n")
 
 rq3_data <- data.tb %>%
-  filter(
+  dplyr::filter(
     !is.na(shown.infographic),
     !is.na(support.nuclear.strike.on.russia_numeric)
   ) %>%
-  select(
+  dplyr::select(
     participant.id,
     shown.infographic,
     support.nuclear.strike.on.russia_numeric,
@@ -53,7 +67,7 @@ rq3_data <- data.tb %>%
     student.status,
     country.of.residence
   ) %>%
-  drop_na()
+  tidyr::drop_na()
 
 cat("  Total sample:", nrow(rq3_data), "\n")
 cat("    Treatment (shown infographic):",
@@ -268,10 +282,214 @@ cat("    Control:", round(pred_probs$prob_high_support[2], 3), "\n")
 cat("    Difference:", round(pred_probs$prob_high_support[1] - pred_probs$prob_high_support[2], 3), "\n\n")
 
 # ==============================================================================
-# 5.5 Generate Markdown Output
+# 5.5 Generate Diagnostic and Forest Plots
 # ==============================================================================
 
-cat("5.5 Generating markdown report...\n")
+cat("5.5 Generating diagnostic and forest plots...\n")
+
+# Create plotting function for 4-panel diagnostics (same as RQ2)
+create_diagnostic_plots_rq3 <- function(residuals_tb, model_label) {
+  # Plot 1: Residuals vs Fitted
+  plot1 <- ggplot(residuals_tb, aes(x = linear_predictor, y = deviance_residual)) +
+    geom_point(alpha = 0.5, size = 1.5) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+    geom_smooth(method = "loess", se = TRUE, color = "blue", linewidth = 0.8) +
+    labs(
+      title = "Residuals vs Fitted",
+      x = "Linear Predictor",
+      y = "Deviance Residuals"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      axis.title = element_text(size = 9)
+    )
+
+  # Plot 2: Q-Q Plot
+  residuals_sorted <- sort(residuals_tb$deviance_residual)
+  theoretical_quantiles <- qnorm(ppoints(length(residuals_sorted)))
+  qq_data <- tibble(
+    theoretical = theoretical_quantiles,
+    sample = residuals_sorted
+  )
+
+  plot2 <- ggplot(qq_data, aes(x = theoretical, y = sample)) +
+    geom_point(alpha = 0.5, size = 1.5) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+    labs(
+      title = "Normal Q-Q Plot",
+      x = "Theoretical Quantiles",
+      y = "Sample Quantiles"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      axis.title = element_text(size = 9)
+    )
+
+  # Plot 3: Scale-Location
+  residuals_tb_plot <- residuals_tb %>%
+    mutate(
+      sqrt_abs_std_residual = sqrt(abs(deviance_residual / sd(deviance_residual)))
+    )
+
+  plot3 <- ggplot(residuals_tb_plot, aes(x = linear_predictor, y = sqrt_abs_std_residual)) +
+    geom_point(alpha = 0.5, size = 1.5) +
+    geom_smooth(method = "loess", se = TRUE, color = "blue", linewidth = 0.8) +
+    labs(
+      title = "Scale-Location",
+      x = "Linear Predictor",
+      y = expression(sqrt("|Standardized Residuals|"))
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      axis.title = element_text(size = 9)
+    )
+
+  # Plot 4: Observed vs Predicted
+  residuals_tb_plot <- residuals_tb_plot %>%
+    mutate(observed_jittered = observed + runif(n(), -0.1, 0.1))
+
+  plot4 <- ggplot(residuals_tb_plot, aes(x = predicted_class, y = observed_jittered)) +
+    geom_jitter(alpha = 0.5, width = 0.2, height = 0.2, size = 1.5, color = "#0072B2") +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "red") +
+    labs(
+      title = "Observed vs Predicted",
+      x = "Predicted Class",
+      y = "Observed Class"
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(size = 10, face = "bold"),
+      axis.title = element_text(size = 9)
+    )
+
+  # Combine into 2x2 panel
+  combined <- arrangeGrob(
+    plot1, plot2, plot3, plot4,
+    ncol = 2, nrow = 2,
+    top = textGrob(model_label, gp = gpar(fontsize = 12, fontface = "bold"))
+  )
+
+  return(combined)
+}
+
+# Calculate residuals for adjusted POM (Model 2)
+cat("  - Calculating POM residuals...\n")
+
+# Extract underlying model
+pom_model <- model2_adjusted$model
+
+# Get predictions
+pred_probs_pom <- predict(pom_model, type = "probs")
+if (is.vector(pred_probs_pom)) {
+  pred_probs_pom <- matrix(pred_probs_pom, nrow = 1)
+}
+pred_class_pom <- apply(pred_probs_pom, 1, which.max)
+
+# Get observed values
+y_observed <- as.numeric(ordered(rq3_data$support.nuclear.strike.on.russia_numeric))
+
+# Calculate linear predictor
+X_pom <- model.matrix(pom_model)[, -1, drop = FALSE]
+beta_pom <- coef(pom_model)
+if (ncol(X_pom) == length(beta_pom)) {
+  linear_pred_pom <- as.vector(X_pom %*% beta_pom)
+} else {
+  linear_pred_pom <- predict(pom_model, type = "linear")
+}
+
+# Calculate deviance residuals
+n_obs <- nrow(rq3_data)
+dev_resid_pom <- numeric(n_obs)
+for (i in seq_len(n_obs)) {
+  p_obs <- pred_probs_pom[i, y_observed[i]]
+  dev_component <- sqrt(-2 * log(p_obs))
+  sign_val <- ifelse(
+    y_observed[i] > pred_class_pom[i], 1,
+    ifelse(y_observed[i] < pred_class_pom[i], -1, 0)
+  )
+  dev_resid_pom[i] <- sign_val * dev_component
+}
+
+# Store POM residuals
+residuals_pom <- tibble(
+  obs_index = seq_len(n_obs),
+  observed = y_observed,
+  predicted_class = pred_class_pom,
+  linear_predictor = linear_pred_pom,
+  deviance_residual = dev_resid_pom
+)
+
+# Generate POM diagnostic plots
+cat("  - Creating POM diagnostic plots...\n")
+pom_diagnostics_plot <- create_diagnostic_plots_rq3(residuals_pom, "POM Diagnostic Plots")
+ggsave(
+  filename = file.path(output_dir, "RQ3_POM_diagnostics.png"),
+  plot = pom_diagnostics_plot,
+  width = 10, height = 8, dpi = 300
+)
+
+# Generate POM forest plot
+cat("  - Creating POM forest plot...\n")
+
+# Extract coefficients from model2_adjusted
+coef_summary_pom <- summary(pom_model)$coefficients
+n_levels <- length(unique(rq3_data$support.nuclear.strike.on.russia_numeric))
+n_thresholds <- n_levels - 1
+
+# Filter out intercepts
+coef_df_pom_forest <- data.frame(
+  variable = rownames(coef_summary_pom)[1:(nrow(coef_summary_pom) - n_thresholds)],
+  estimate = coef_summary_pom[1:(nrow(coef_summary_pom) - n_thresholds), "Value"],
+  std_error = coef_summary_pom[1:(nrow(coef_summary_pom) - n_thresholds), "Std. Error"],
+  stringsAsFactors = FALSE
+) %>%
+  mutate(
+    odds_ratio = exp(estimate),
+    ci_lower = exp(estimate - 1.96 * std_error),
+    ci_upper = exp(estimate + 1.96 * std_error)
+  ) %>%
+  arrange(odds_ratio) %>%
+  mutate(variable = factor(variable, levels = variable))
+
+# Create POM forest plot
+pom_forest <- ggplot(coef_df_pom_forest, aes(x = odds_ratio, y = variable)) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
+  geom_errorbarh(aes(xmin = ci_lower, xmax = ci_upper), height = 0.2, color = "#0072B2") +
+  geom_point(size = 3, color = "#0072B2") +
+  scale_x_continuous(
+    trans = "log",
+    breaks = c(0.25, 0.5, 1, 2, 4),
+    labels = c("0.25", "0.5", "1.0", "2.0", "4.0")
+  ) +
+  labs(
+    title = "POM Coefficients (Odds Ratios with 95% CI)",
+    x = "Odds Ratio (log scale)",
+    y = ""
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
+    axis.title.x = element_text(size = 10),
+    axis.text.y = element_text(size = 9),
+    axis.text.x = element_text(size = 9)
+  )
+
+ggsave(
+  filename = file.path(output_dir, "RQ3_POM_forest.png"),
+  plot = pom_forest,
+  width = 10, height = 6, dpi = 300
+)
+
+cat("  ✓ POM plots saved\n\n")
+
+# ==============================================================================
+# 5.6 Generate Markdown Output
+# ==============================================================================
+
+cat("5.6 Generating markdown report...\n")
 
 md_file <- file.path(output_dir, "RQ3_treatment_effects.md")
 md_content <- c(
@@ -320,6 +538,18 @@ md_content <- c(
          round(treatment_coef$ci_lower_or[1], 3), "-",
          round(treatment_coef$ci_upper_or[1], 3), ")"),
   paste0("- **p-value**: ", sprintf("%.4f", treatment_coef$p_value[1])),
+  "",
+  "#### Diagnostic Plots",
+  "",
+  "![POM Diagnostic Plots](RQ3_POM_diagnostics.png)",
+  "",
+  "**Visual Assessment**: 4-panel diagnostic plot shows residuals vs fitted, normal Q-Q, scale-location, and observed vs predicted.",
+  "",
+  "#### Forest Plot",
+  "",
+  "![POM Forest Plot](RQ3_POM_forest.png)",
+  "",
+  "**Interpretation**: Odds ratios with 95% confidence intervals for all predictors under proportional odds assumption.",
   "",
   "### Proportional Odds Assumption Test",
   "",
