@@ -247,13 +247,15 @@ plot_pom_coefficients <- function(pom_result, plot_title = NULL) {
     density_scaled <- (density_vals / max_density) * height_scale
 
     # Apply p-value based opacity
-    # Linear mapping: p=0.01 → 100%, p=0.25 → 25%, p>0.25 → 25%
-    opacity <- if (row$p_value <= 0.01) {
+    # p<0.01 = 100% opaque, p<0.05 = 80% opaque, p<0.1 = 60% opaque, p>=0.1 = 0% opaque
+    opacity <- if (row$p_value < 0.01) {
       1.0
-    } else if (row$p_value <= 0.25) {
-      1.0 - ((row$p_value - 0.01) / (0.25 - 0.01)) * 0.75
+    } else if (row$p_value < 0.05) {
+      0.8
+    } else if (row$p_value < 0.1) {
+      0.6
     } else {
-      0.25
+      0.0
     }
 
     data.frame(
@@ -323,15 +325,16 @@ plot_pom_coefficients <- function(pom_result, plot_title = NULL) {
 }
 
 # PLOT PPOM THRESHOLD-SPECIFIC COEFFICIENTS
-plot_ppom_threshold_coefficients <- function(ppom_result, plot_title = NULL) {
+plot_ppom_threshold_coefficients <- function(coef_data, plot_title = NULL) {
   # Create plot showing how coefficients vary across thresholds in PPOM
+  # Uses normal curves to represent uncertainty, similar to forest plots
   #
   # Args:
-  #   ppom_result: Output from fit_ppom() containing threshold_specific_coefs
+  #   coef_data: Data frame with columns: variable, threshold, estimate, std_error, odds_ratio
   #   plot_title: Optional title for the plot
   #
   # Returns:
-  #   A ggplot object showing coefficients by threshold with confidence intervals
+  #   A ggplot object showing threshold-specific coefficients with normal curves
 
   # Load required packages
   if (!requireNamespace("ggplot2", quietly = TRUE)) {
@@ -343,58 +346,159 @@ plot_ppom_threshold_coefficients <- function(ppom_result, plot_title = NULL) {
   library(ggplot2)
   library(dplyr)
 
-  # Extract threshold-specific coefficients
-  coef_data <- ppom_result$threshold_specific_coefs
-
   if (nrow(coef_data) == 0) {
-    stop("No threshold-specific coefficients found in ppom_result")
+    stop("No threshold-specific coefficients found in coef_data")
   }
 
-  # Create threshold mapping for x-axis labels
-  threshold_mapping <- coef_data %>%
-    select(threshold_num, threshold) %>%
-    distinct() %>%
-    arrange(threshold_num)
+  # Calculate p-values if not present (using z-test for logistic regression)
+  if (!"p_value" %in% names(coef_data)) {
+    coef_data <- coef_data %>%
+      mutate(
+        z_value = estimate / std_error,
+        p_value = 2 * pnorm(abs(z_value), lower.tail = FALSE)
+      )
+  }
 
-  # Create plot showing coefficients across thresholds
-  # Each variable gets its own facet
-  threshold_plot <- ggplot(coef_data, aes(x = threshold_num, y = odds_ratio, group = variable)) +
+  # Define color mapping for variables
+  variable_colors <- c(
+    "nw.awareness.1980s_numeric" = "#D55E00",
+    "nw.awareness.recent.academic_numeric" = "#E69F00",
+    "nw.awareness.recent.media_numeric" = "#0072B2"
+  )
+
+  # All curves should be centered at threshold level (no vertical offset)
+  coef_data <- coef_data %>%
+    arrange(threshold) %>%
+    mutate(
+      threshold_num = as.numeric(threshold),
+      y_pos = threshold_num  # All curves centered on threshold line
+    )
+
+  # Calculate plot limits for x-axis (odds ratio, log scale)
+  log_or_all <- log(coef_data$odds_ratio)
+  log_se_all <- coef_data$std_error
+  log_lower_all <- log_or_all - 1.96 * log_se_all
+  log_upper_all <- log_or_all + 1.96 * log_se_all
+  log_range <- max(abs(c(log_lower_all, log_upper_all)))
+  x_limits <- exp(c(-log_range * 1.2, log_range * 1.2))
+
+  # Generate normal curve data for each coefficient
+  n_points <- 30
+  curve_data <- lapply(1:nrow(coef_data), function(i) {
+    row <- coef_data[i, ]
+
+    # Generate x values on log scale
+    log_mean <- log(row$odds_ratio)
+    log_se <- row$std_error
+
+    x_log_seq <- seq(log_mean - 4 * log_se, log_mean + 4 * log_se, length.out = n_points)
+    x_or_seq <- exp(x_log_seq)
+
+    # Calculate normal density
+    density_vals <- dnorm(x_log_seq, mean = log_mean, sd = log_se)
+
+    # Normalize and scale density
+    max_density <- max(density_vals)
+    height_scale <- 0.25  # Slightly smaller than forest plot since we have 3 variables per threshold
+    density_scaled <- (density_vals / max_density) * height_scale
+
+    # Apply p-value based opacity
+    # p<0.01 = 80% opaque, p<0.05 = 50% opaque, p<0.1 = 25% opaque, p>=0.1 = 0% opaque
+    opacity <- if (row$p_value < 0.01) {
+      0.8
+    } else if (row$p_value < 0.05) {
+      0.5
+    } else if (row$p_value < 0.1) {
+      0.25
+    } else {
+      0.0
+    }
+
+    # Get color for this variable
+    var_color <- variable_colors[as.character(row$variable)]
+    if (is.na(var_color)) var_color <- "#999999"  # Fallback color
+
+    data.frame(
+      variable = row$variable,
+      threshold = row$threshold,
+      x = x_or_seq,
+      y_base = row$y_pos,
+      y_curve = row$y_pos + density_scaled,
+      odds_ratio = row$odds_ratio,
+      p_value = row$p_value,
+      opacity = opacity,
+      color = var_color,
+      stringsAsFactors = FALSE
+    )
+  }) %>% bind_rows()
+
+  # Create threshold labels
+  threshold_levels <- sort(unique(coef_data$threshold_num))
+  threshold_labels <- as.character(threshold_levels)
+
+  # Create title
+  main_title <- if (!is.null(plot_title)) {
+    plot_title
+  } else {
+    "PPOM Threshold-Specific Coefficients"
+  }
+
+  # Create the plot with swapped axes
+  threshold_plot <- ggplot() +
+    # Light grey vertical lines at x-axis breaks
+    geom_vline(xintercept = c(0.25, 0.5, 2, 4), linetype = "solid", color = "gray85", linewidth = 0.3) +
+
     # Reference line at OR = 1
-    geom_hline(yintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
+    geom_vline(xintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
 
-    # Confidence interval ribbons
-    geom_ribbon(aes(ymin = ci_lower_or, ymax = ci_upper_or),
-      alpha = 0.2, fill = "#0072B2") +
+    # Horizontal lines at each threshold position
+    geom_hline(yintercept = threshold_levels, color = "gray70", linewidth = 0.5) +
 
-    # Point estimates with line connecting them
-    geom_line(color = "#0072B2", linewidth = 1) +
-    geom_point(aes(color = ifelse(p_value < 0.05, "Significant", "Not significant")),
-      size = 3) +
-
-    # Facet by variable
-    facet_wrap(~variable, scales = "free_y", ncol = 2) +
+    # Normal curves (one per coefficient, colored by variable)
+    # Map variable to fill and color, then use manual scales
+    geom_ribbon(data = curve_data,
+      aes(x = x, ymin = y_base, ymax = y_curve,
+          group = interaction(variable, threshold),
+          fill = variable, color = variable, alpha = opacity),
+      linewidth = 0.5) +
 
     # Styling
-    scale_color_manual(
-      values = c("Significant" = "#D55E00", "Not significant" = "#0072B2"),
-      name = "p < 0.05"
-    ) +
     scale_x_continuous(
-      breaks = threshold_mapping$threshold_num,
-      labels = threshold_mapping$threshold
+      trans = "log",
+      breaks = c(0.25, 0.5, 1, 2, 4),
+      labels = c("0.25", "0.5", "1.0", "2.0", "4.0"),
+      limits = x_limits
     ) +
+    scale_y_continuous(
+      breaks = threshold_levels,
+      labels = threshold_labels,
+      limits = c(min(threshold_levels) - 0.5, max(threshold_levels) + 0.5)
+    ) +
+    scale_fill_manual(
+      values = variable_colors,
+      labels = c("1980s awareness", "Recent academic", "Recent media"),
+      name = "Awareness Variable"
+    ) +
+    scale_color_manual(
+      values = variable_colors,
+      labels = c("1980s awareness", "Recent academic", "Recent media"),
+      name = "Awareness Variable"
+    ) +
+    scale_alpha_identity() +  # Use actual alpha values
+
     labs(
-      title = if (!is.null(plot_title)) plot_title else "Threshold-Specific Coefficients (PPOM)",
-      x = "Threshold",
-      y = "Odds Ratio"
+      title = main_title,
+      x = "Odds Ratio (log scale)",
+      y = "Threshold"
     ) +
     theme_minimal() +
     theme(
       plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
       axis.title = element_text(size = 10),
-      axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+      axis.text.x = element_text(size = 9),
       axis.text.y = element_text(size = 9),
-      strip.text = element_text(size = 10, face = "bold"),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
       legend.position = "bottom"
     )
 

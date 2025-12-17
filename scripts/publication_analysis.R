@@ -39,6 +39,7 @@ source("scripts/c.helper_functions/04_regression_diagnostics.R")
 source("scripts/c.helper_functions/05_plotting.R")
 source("scripts/c.helper_functions/06_pdf_export.R")
 source("scripts/c.helper_functions/07_orchestration.R")
+source("scripts/c.helper_functions/08_markdown_reports.R")
 
 # SECTION CLOCKING
 section0.duration <- Sys.time() - section0.starttime

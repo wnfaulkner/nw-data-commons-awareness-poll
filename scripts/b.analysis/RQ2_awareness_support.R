@@ -548,48 +548,26 @@ cat("  ✓ Diagnostic plots saved\n\n")
 
 cat("2.2 Generating forest plots...\n")
 
-# Extract POM coefficients for forest plot
+# Extract POM coefficients and prepare for forest plot using helper function
 coef_summary_pom_full <- summary(model_pom)$coefficients
 n_levels <- length(levels(rq2_data$outcome_ordered))
 n_thresholds <- n_levels - 1
 
-# Filter out intercepts
-coef_df_pom_forest <- data.frame(
-  variable = rownames(coef_summary_pom_full)[1:(nrow(coef_summary_pom_full) - n_thresholds)],
-  estimate = coef_summary_pom_full[1:(nrow(coef_summary_pom_full) - n_thresholds), "Value"],
-  std_error = coef_summary_pom_full[1:(nrow(coef_summary_pom_full) - n_thresholds), "Std. Error"],
-  stringsAsFactors = FALSE
-) %>%
-  mutate(
-    odds_ratio = exp(estimate),
-    ci_lower = exp(estimate - 1.96 * std_error),
-    ci_upper = exp(estimate + 1.96 * std_error)
-  ) %>%
-  arrange(odds_ratio) %>%
-  mutate(variable = factor(variable, levels = variable))
+# Filter out intercepts and prepare data structure for plot_pom_coefficients()
+pom_result_for_plot <- list(
+  coefficients = tibble(
+    variable = rownames(coef_summary_pom_full)[1:(nrow(coef_summary_pom_full) - n_thresholds)],
+    log_odds = coef_summary_pom_full[1:(nrow(coef_summary_pom_full) - n_thresholds), "Value"],
+    std_error = coef_summary_pom_full[1:(nrow(coef_summary_pom_full) - n_thresholds), "Std. Error"],
+    t_value = coef_summary_pom_full[1:(nrow(coef_summary_pom_full) - n_thresholds), "t value"],
+    p_value = 2 * pnorm(abs(coef_summary_pom_full[1:(nrow(coef_summary_pom_full) - n_thresholds), "t value"]), lower.tail = FALSE),
+    odds_ratio = exp(log_odds)
+  ),
+  model_stats = list(confidence_level = 0.95)
+)
 
-# Create POM forest plot
-pom_forest <- ggplot(coef_df_pom_forest, aes(x = odds_ratio, y = variable)) +
-  geom_vline(xintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
-  geom_errorbarh(aes(xmin = ci_lower, xmax = ci_upper), height = 0.2, color = "#0072B2") +
-  geom_point(size = 3, color = "#0072B2") +
-  scale_x_continuous(
-    trans = "log",
-    breaks = c(0.25, 0.5, 1, 2, 4),
-    labels = c("0.25", "0.5", "1.0", "2.0", "4.0")
-  ) +
-  labs(
-    title = "POM Coefficients (Odds Ratios with 95% CI)",
-    x = "Odds Ratio (log scale)",
-    y = ""
-  ) +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
-    axis.title.x = element_text(size = 10),
-    axis.text.y = element_text(size = 9),
-    axis.text.x = element_text(size = 9)
-  )
+# Create POM forest plot using helper function with normal curves
+pom_forest <- plot_pom_coefficients(pom_result_for_plot, plot_title = "POM Coefficients")
 
 ggsave(
   filename = file.path(output_dir, "RQ2_POM_forest.png"),
@@ -633,30 +611,12 @@ for (var in awareness_vars) {
   }
 }
 
-# Create PPOM threshold-specific coefficient plot
+# Create PPOM threshold-specific coefficient plot using helper function
 if (nrow(ppom_coef_data) > 0) {
-  ppom_coef_plot <- ggplot(ppom_coef_data, aes(x = factor(threshold), y = odds_ratio, group = variable, color = variable)) +
-    geom_hline(yintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
-    geom_line(linewidth = 1) +
-    geom_point(size = 3) +
-    geom_errorbar(aes(ymin = ci_lower, ymax = ci_upper), width = 0.2) +
-    scale_color_manual(
-      values = c("#D55E00", "#E69F00", "#0072B2"),
-      labels = c("1980s awareness", "Recent academic", "Recent media"),
-      name = "Awareness Variable"
-    ) +
-    labs(
-      title = "PPOM Threshold-Specific Coefficients (Awareness Variables)",
-      x = "Threshold",
-      y = "Odds Ratio"
-    ) +
-    theme_minimal() +
-    theme(
-      plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
-      axis.title = element_text(size = 10),
-      axis.text = element_text(size = 9),
-      legend.position = "bottom"
-    )
+  ppom_coef_plot <- plot_ppom_threshold_coefficients(
+    coef_data = ppom_coef_data,
+    plot_title = "PPOM Threshold-Specific Coefficients (Awareness Variables)"
+  )
 
   ggsave(
     filename = file.path(output_dir, "RQ2_PPOM_coefficients.png"),
@@ -765,8 +725,6 @@ md_content <- c(
   "### Forest Plot",
   "",
   "![POM Forest Plot](RQ2_POM_forest.png)",
-  "",
-  "**Interpretation**: Odds ratios with 95% confidence intervals for all predictors under proportional odds assumption.",
   "",
   "---",
   "",

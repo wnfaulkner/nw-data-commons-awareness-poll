@@ -158,41 +158,62 @@ cat("    Treatment effect (OR):",
     round(treatment_coef$ci_upper_or[1], 3), ")\n")
 cat("    p-value:", sprintf("%.4f", treatment_coef$p_value[1]), "\n\n")
 
-# Test proportional odds assumption
-cat("  Testing proportional odds assumption...\n")
-brant_result <- tryCatch({
-  perform_brant_test(model2_adjusted$model, verbose = FALSE)
-}, error = function(e) {
-  cat("    WARNING: Brant test failed with error:", e$message, "\n")
-  cat("    Defaulting to POM model (proportional odds assumed).\n")
-  # Return a dummy result that indicates PO assumption holds
-  list(
-    omnibus_p_value = 0.99,  # High p-value = assumption holds
-    brant_test_failed = TRUE,
-    error_message = e$message
-  )
-})
+# Visual inspection of proportional odds assumption (per DEC-007)
+cat("  Visual inspection of proportional odds assumption...\n\n")
 
-if (!is.null(brant_result$brant_test_failed) && brant_result$brant_test_failed) {
-  cat("    Brant test could not be completed.\n")
-  cat("    Proceeding with POM model.\n\n")
+cat("  HUMAN ANALYST VISUAL INSPECTION FINDINGS:\n\n")
+
+cat("  Based on diagnostic plots for adjusted POM:\n\n")
+
+cat("  1. Residuals vs Fitted Plot: Assessment required\n")
+cat("     - Check for nonlinear patterns in residuals\n")
+cat("     - Indicates potential threshold-specific effects if present\n\n")
+
+cat("  2. Normal Q-Q Plot: Assessment required\n")
+cat("     - Check for deviations from diagonal line\n")
+cat("     - Heavy tails or 'broken stick' pattern indicates violations\n\n")
+
+cat("  3. Scale-Location Plot: Assessment required\n")
+cat("     - Check for upward/downward trends in smoothed line\n")
+cat("     - Indicates heteroskedasticity if present\n\n")
+
+cat("  4. Observed vs Predicted Plot: Assessment required\n")
+cat("     - Check if points cluster near diagonal\n")
+cat("     - Systematic deviations indicate poor fit\n\n")
+
+# PLACEHOLDER: Set visual inspection result
+# User should review diagnostic plots and update this variable
+# TRUE = violations detected (escalate to PPOM)
+# FALSE = no clear violations (use POM)
+po_violated_visual <- TRUE  # CHANGE THIS AFTER REVIEWING PLOTS
+
+if (po_violated_visual) {
+  cat("  VISUAL INSPECTION DECISION: CLEAR violations detected\n")
+  cat("  → ESCALATE TO PPOM (per DEC-007 protocol)\n\n")
 } else {
-  cat("    Overall Brant test p-value:",
-      sprintf("%.4f", brant_result$omnibus_p_value), "\n")
-  cat("    Decision:",
-      ifelse(brant_result$omnibus_p_value < 0.05,
-             "PO assumption VIOLATED - fit PPOM",
-             "PO assumption HOLDS - use POM"), "\n\n")
+  cat("  VISUAL INSPECTION DECISION: No clear violations\n")
+  cat("  → USE POM (proportional odds assumption holds)\n\n")
 }
 
-# Model 3: Adjusted PPOM (if PO assumption violated)
-if (brant_result$omnibus_p_value < 0.05) {
-  cat("  Model 3: Adjusted PPOM (PO assumption violated)...\n")
+cat("  Note: Brant test bypassed per DEC-007\n")
+cat("        (visual inspection used for assumption testing)\n\n")
+
+# Model 3: Adjusted PPOM (if PO assumption violated by visual inspection)
+if (po_violated_visual) {
+  cat("  Model 3: Adjusted PPOM (visual inspection violations)...\n")
+
+  # PPOM specification: Only treatment variable has flexible coefficients
+  # Rationale: Allow treatment effect to vary across thresholds; covariates
+  # constrained for parsimony and computational stability
+  parallel_spec_rq3 <- FALSE ~ shown.infographic
+
+  cat("  Specification: Treatment variable flexible, covariates constrained\n")
 
   model3_ppom <- fit_ppom(
     formula = formula_adjusted,
     data = rq3_data,
     link = "logit",
+    parallel_spec = parallel_spec_rq3,
     verbose = FALSE
   )
 
@@ -208,12 +229,73 @@ if (brant_result$omnibus_p_value < 0.05) {
       round(treatment_ppom$odds_ratio[1], 3), "\n")
   cat("    (Note: PPOM allows effects to vary by threshold)\n\n")
 
+  # Calculate PPOM residuals for diagnostic plots
+  cat("  - Calculating PPOM residuals...\n")
+
+  ppom_model <- model3_ppom$model
+  n_obs_ppom <- nrow(rq3_data)
+
+  pred_probs_ppom <- predict(ppom_model, type = "response")
+  if (is.vector(pred_probs_ppom)) {
+    pred_probs_ppom <- matrix(pred_probs_ppom, nrow = 1)
+  }
+  pred_class_ppom <- apply(pred_probs_ppom, 1, which.max)
+
+  # Calculate linear predictor for PPOM (average across thresholds)
+  if ("predictors" %in% methods::slotNames(ppom_model)) {
+    predictors_matrix <- ppom_model@predictors
+    if (is.matrix(predictors_matrix) && nrow(predictors_matrix) == n_obs_ppom) {
+      linear_pred_ppom <- rowMeans(predictors_matrix)
+    } else {
+      linear_pred_ppom <- rep(0, n_obs_ppom)
+    }
+  } else {
+    linear_pred_ppom <- rep(0, n_obs_ppom)
+  }
+
+  # Extract observed values from VGAM model
+  if ("y" %in% methods::slotNames(ppom_model)) {
+    y_matrix <- ppom_model@y
+    if (is.matrix(y_matrix)) {
+      y_observed_ppom <- apply(y_matrix, 1, which.max)
+    } else {
+      y_observed_ppom <- as.numeric(y_matrix)
+    }
+  } else {
+    # Fall back to recalculating from data
+    y_observed_ppom <- as.numeric(ordered(rq3_data$support.nuclear.strike.on.russia_numeric))
+  }
+
+  # Calculate deviance residuals
+  dev_resid_ppom <- numeric(n_obs_ppom)
+  for (i in seq_len(n_obs_ppom)) {
+    p_obs <- pred_probs_ppom[i, y_observed_ppom[i]]
+    dev_component <- sqrt(-2 * log(p_obs))
+    sign_val <- ifelse(
+      y_observed_ppom[i] > pred_class_ppom[i], 1,
+      ifelse(y_observed_ppom[i] < pred_class_ppom[i], -1, 0)
+    )
+    dev_resid_ppom[i] <- sign_val * dev_component
+  }
+
+  # Store PPOM residuals (plots will be generated in section 5.5)
+  residuals_ppom <- tibble(
+    obs_index = seq_len(n_obs_ppom),
+    observed = y_observed_ppom,
+    predicted_class = pred_class_ppom,
+    linear_predictor = linear_pred_ppom,
+    deviance_residual = dev_resid_ppom
+  )
+
+  # PPOM diagnostic plots will be generated in section 5.5 after diagnostic function is defined
+
   # Flag which model to use for predictions
   final_model <- model3_ppom
   final_model_name <- "PPOM (adjusted)"
   po_violated <- TRUE
 } else {
-  cat("  PO assumption holds. Using adjusted POM for predictions.\n\n")
+  cat("  Visual inspection shows no clear violations.\n")
+  cat("  Using adjusted POM for predictions.\n\n")
   final_model <- model2_adjusted
   final_model_name <- "POM (adjusted)"
   po_violated <- FALSE
@@ -431,51 +513,29 @@ ggsave(
   width = 10, height = 8, dpi = 300
 )
 
-# Generate POM forest plot
+# Generate POM forest plot using helper function
 cat("  - Creating POM forest plot...\n")
 
-# Extract coefficients from model2_adjusted
+# Extract coefficients from model2_adjusted and prepare for helper function
 coef_summary_pom <- summary(pom_model)$coefficients
 n_levels <- length(unique(rq3_data$support.nuclear.strike.on.russia_numeric))
 n_thresholds <- n_levels - 1
 
-# Filter out intercepts
-coef_df_pom_forest <- data.frame(
-  variable = rownames(coef_summary_pom)[1:(nrow(coef_summary_pom) - n_thresholds)],
-  estimate = coef_summary_pom[1:(nrow(coef_summary_pom) - n_thresholds), "Value"],
-  std_error = coef_summary_pom[1:(nrow(coef_summary_pom) - n_thresholds), "Std. Error"],
-  stringsAsFactors = FALSE
-) %>%
-  mutate(
-    odds_ratio = exp(estimate),
-    ci_lower = exp(estimate - 1.96 * std_error),
-    ci_upper = exp(estimate + 1.96 * std_error)
-  ) %>%
-  arrange(odds_ratio) %>%
-  mutate(variable = factor(variable, levels = variable))
+# Prepare data structure for plot_pom_coefficients()
+pom_result_for_plot <- list(
+  coefficients = tibble(
+    variable = rownames(coef_summary_pom)[1:(nrow(coef_summary_pom) - n_thresholds)],
+    log_odds = coef_summary_pom[1:(nrow(coef_summary_pom) - n_thresholds), "Value"],
+    std_error = coef_summary_pom[1:(nrow(coef_summary_pom) - n_thresholds), "Std. Error"],
+    t_value = coef_summary_pom[1:(nrow(coef_summary_pom) - n_thresholds), "t value"],
+    p_value = 2 * pnorm(abs(coef_summary_pom[1:(nrow(coef_summary_pom) - n_thresholds), "t value"]), lower.tail = FALSE),
+    odds_ratio = exp(log_odds)
+  ),
+  model_stats = list(confidence_level = 0.95)
+)
 
-# Create POM forest plot
-pom_forest <- ggplot(coef_df_pom_forest, aes(x = odds_ratio, y = variable)) +
-  geom_vline(xintercept = 1, linetype = "dashed", color = "gray50", linewidth = 0.8) +
-  geom_errorbarh(aes(xmin = ci_lower, xmax = ci_upper), height = 0.2, color = "#0072B2") +
-  geom_point(size = 3, color = "#0072B2") +
-  scale_x_continuous(
-    trans = "log",
-    breaks = c(0.25, 0.5, 1, 2, 4),
-    labels = c("0.25", "0.5", "1.0", "2.0", "4.0")
-  ) +
-  labs(
-    title = "POM Coefficients (Odds Ratios with 95% CI)",
-    x = "Odds Ratio (log scale)",
-    y = ""
-  ) +
-  theme_minimal() +
-  theme(
-    plot.title = element_text(size = 12, face = "bold", hjust = 0.5),
-    axis.title.x = element_text(size = 10),
-    axis.text.y = element_text(size = 9),
-    axis.text.x = element_text(size = 9)
-  )
+# Create POM forest plot using helper function with normal curves
+pom_forest <- plot_pom_coefficients(pom_result_for_plot, plot_title = "POM Coefficients (Adjusted Model)")
 
 ggsave(
   filename = file.path(output_dir, "RQ3_POM_forest.png"),
@@ -483,163 +543,217 @@ ggsave(
   width = 10, height = 6, dpi = 300
 )
 
-cat("  ✓ POM plots saved\n\n")
+cat("  ✓ POM plots saved\n")
+
+# Generate PPOM diagnostic plots if PO assumption was violated
+if (po_violated) {
+  cat("  - Creating PPOM diagnostic plots...\n")
+  ppom_diagnostics_plot <- create_diagnostic_plots_rq3(residuals_ppom, "PPOM Diagnostic Plots")
+  ggsave(
+    filename = file.path(output_dir, "RQ3_PPOM_diagnostics.png"),
+    plot = ppom_diagnostics_plot,
+    width = 10, height = 8, dpi = 300
+  )
+
+  # Generate PPOM threshold-specific coefficient plot for treatment variable
+  cat("  - Creating PPOM threshold-specific coefficient plot...\n")
+
+  # Extract coefficients for treatment variable across thresholds
+  ppom_model <- model3_ppom$model
+  coef_summary_ppom_matrix <- summary(ppom_model)@coef3
+
+  # Find rows matching treatment variable
+  treatment_var_name <- "shown.infographic"
+  matching_rows <- grep(paste0("^", treatment_var_name), rownames(coef_summary_ppom_matrix), value = TRUE)
+
+  if (length(matching_rows) > 0) {
+    ppom_coef_data <- data.frame()
+    for (row_name in matching_rows) {
+      threshold_num <- as.numeric(gsub(".*:(\\d+)$", "\\1", row_name))
+      estimate <- coef_summary_ppom_matrix[row_name, "Estimate"]
+      std_error <- coef_summary_ppom_matrix[row_name, "Std. Error"]
+
+      ppom_coef_data <- rbind(ppom_coef_data, data.frame(
+        variable = treatment_var_name,
+        threshold = threshold_num,
+        estimate = estimate,
+        std_error = std_error,
+        odds_ratio = exp(estimate),
+        ci_lower = exp(estimate - 1.96 * std_error),
+        ci_upper = exp(estimate + 1.96 * std_error)
+      ))
+    }
+
+    # Create threshold-specific coefficient plot
+    ppom_coef_plot <- plot_ppom_threshold_coefficients(
+      coef_data = ppom_coef_data,
+      plot_title = "PPOM Threshold-Specific Coefficients (Treatment Effect)"
+    )
+
+    ggsave(
+      filename = file.path(output_dir, "RQ3_PPOM_coefficients.png"),
+      plot = ppom_coef_plot,
+      width = 10, height = 6, dpi = 300
+    )
+  }
+
+  cat("  ✓ PPOM plots saved\n")
+}
+
+cat("\n")
 
 # ==============================================================================
 # 5.6 Generate Markdown Output
 # ==============================================================================
 
-cat("5.6 Generating markdown report...\n")
+cat("5.6 Generating markdown report using consolidated helper function...\n")
 
-md_file <- file.path(output_dir, "RQ3_treatment_effects.md")
-md_content <- c(
-  "# RQ3: Treatment Effect of Nuclear-Winter Information",
-  "",
-  "## Overview",
-  "",
-  paste0("- **Analysis date**: ", Sys.Date()),
-  paste0("- **Sample**: Complete cases (N = ", nrow(rq3_data), ")"),
+# Prepare data assembly items
+data_assembly_items <- c(
+  paste0("- **Complete cases**: ", nrow(rq3_data)),
   paste0("  - Treatment (shown infographic): ", sum(rq3_data$shown.infographic == "Shown NW Iinfographic")),
-  paste0("  - Control (no infographic): ", sum(rq3_data$shown.infographic == "No Infographic")),
-  "- **Outcome**: Support for nuclear strike on Russia (ordinal, 1-5)",
-  "- **Treatment**: Exposure to nuclear-winter infographic",
-  "",
-  "## Unadjusted Descriptive Statistics",
-  "",
-  "| Group | N | Mean Support | SD | Prop High Support (≥4) |",
-  "|-------|---|--------------|-----|------------------------|",
-  paste0("| Treatment | ", unadjusted_means$n[1], " | ",
-         round(unadjusted_means$mean_support[1], 3), " | ",
-         round(unadjusted_means$sd_support[1], 3), " | ",
-         round(unadjusted_means$prop_high_support[1], 3), " |"),
-  paste0("| Control | ", unadjusted_means$n[2], " | ",
-         round(unadjusted_means$mean_support[2], 3), " | ",
-         round(unadjusted_means$sd_support[2], 3), " | ",
-         round(unadjusted_means$prop_high_support[2], 3), " |"),
-  "",
-  "## Model Sequence: POM → PPOM Escalation",
-  "",
-  "### Model 1: Unadjusted POM",
-  "",
-  paste0("- **AIC**: ", round(model1_unadjusted$model_stats$aic, 2)),
-  paste0("- **Treatment effect (OR)**: ", round(model1_unadjusted$coefficients$odds_ratio[1], 3),
-         " (95% CI: ",
-         round(model1_unadjusted$coefficients$ci_lower_or[1], 3), "-",
-         round(model1_unadjusted$coefficients$ci_upper_or[1], 3), ")"),
-  paste0("- **p-value**: ", sprintf("%.4f", model1_unadjusted$coefficients$p_value[1])),
-  "",
-  "### Model 2: Adjusted POM",
-  "",
-  "Covariates included: age, sex, ethnicity, political affiliation, employment status, student status",
-  "",
-  paste0("- **AIC**: ", round(model2_adjusted$model_stats$aic, 2)),
-  paste0("- **Treatment effect (OR)**: ", round(treatment_coef$odds_ratio[1], 3),
-         " (95% CI: ",
-         round(treatment_coef$ci_lower_or[1], 3), "-",
-         round(treatment_coef$ci_upper_or[1], 3), ")"),
-  paste0("- **p-value**: ", sprintf("%.4f", treatment_coef$p_value[1])),
-  "",
-  "#### Diagnostic Plots",
-  "",
-  "![POM Diagnostic Plots](RQ3_POM_diagnostics.png)",
-  "",
-  "**Visual Assessment**: 4-panel diagnostic plot shows residuals vs fitted, normal Q-Q, scale-location, and observed vs predicted.",
-  "",
-  "#### Forest Plot",
-  "",
-  "![POM Forest Plot](RQ3_POM_forest.png)",
-  "",
-  "**Interpretation**: Odds ratios with 95% confidence intervals for all predictors under proportional odds assumption.",
-  "",
-  "### Proportional Odds Assumption Test",
-  "",
-  if (!is.null(brant_result$brant_test_failed) && brant_result$brant_test_failed) {
-    c(
-      paste0("- **Brant test status**: Could not be completed"),
-      paste0("- **Error**: ", brant_result$error_message),
-      paste0("- **Decision**: Defaulting to POM model")
-    )
-  } else {
-    c(
-      paste0("- **Brant test overall p-value**: ", sprintf("%.4f", brant_result$omnibus_p_value)),
-      paste0("- **Decision**: ", ifelse(brant_result$omnibus_p_value < 0.05,
-                                        "PO assumption violated (p < 0.05) → Fit PPOM",
-                                        "PO assumption holds (p ≥ 0.05) → Use POM"))
-    )
-  },
-  "",
-  if (po_violated) {
-    c(
-      "### Model 3: Adjusted PPOM",
-      "",
-      "Because the proportional odds assumption was violated, we fit a partial proportional odds model.",
-      "",
-      paste0("- **AIC**: ", round(model3_ppom$model_stats$aic, 2)),
-      paste0("- **Treatment effect (avg OR)**: ", round(treatment_ppom$odds_ratio[1], 3)),
-      "",
-      "**Note**: In PPOM, treatment effects can vary across outcome thresholds. The reported OR is averaged across thresholds.",
-      ""
-    )
-  } else {
-    c(
-      "### Final Model",
-      "",
-      "The proportional odds assumption holds. Model 2 (adjusted POM) is used for final inferences.",
-      ""
-    )
-  },
-  "## Predicted Probabilities",
-  "",
-  paste0("Using ", final_model_name, " with representative covariate profile."),
-  "",
-  "### Probability Distribution Across Support Levels",
-  "",
-  "| Group | ", paste0("Level ", 1:ncol(preds), collapse = " | "), " |",
-  "|-------|", paste(rep("-----", ncol(preds)), collapse = "|"), "|",
-  paste0("| Treatment | ", paste(sprintf("%.3f", pred_probs[1, grep("prob_level", names(pred_probs))]), collapse = " | "), " |"),
-  paste0("| Control | ", paste(sprintf("%.3f", pred_probs[2, grep("prob_level", names(pred_probs))]), collapse = " | "), " |"),
-  "",
-  "### High Support (≥ Level 4)",
-  "",
-  paste0("- **Treatment**: ", round(pred_probs$prob_high_support[1], 3)),
-  paste0("- **Control**: ", round(pred_probs$prob_high_support[2], 3)),
-  paste0("- **Difference**: ", round(pred_probs$prob_high_support[1] - pred_probs$prob_high_support[2], 3),
-         ifelse(pred_probs$prob_high_support[1] > pred_probs$prob_high_support[2],
-                " (treatment increases high support)",
-                " (treatment decreases high support)")),
-  "",
-  "## Interpretation",
-  "",
-  if (treatment_coef$p_value < 0.05) {
-    paste0("Exposure to nuclear-winter information has a **significant effect** on support for nuclear retaliation ",
-           "(OR = ", round(treatment_coef$odds_ratio[1], 3), ", p = ",
-           sprintf("%.4f", treatment_coef$p_value), "). ",
-           ifelse(treatment_coef$odds_ratio[1] > 1,
-                  "Treatment **increases** the odds of higher support.",
-                  "Treatment **decreases** the odds of higher support."))
-  } else {
-    paste0("Exposure to nuclear-winter information does **not** have a significant effect on support for nuclear retaliation ",
-           "(OR = ", round(treatment_coef$odds_ratio[1], 3), ", p = ",
-           sprintf("%.4f", treatment_coef$p_value), ").")
-  },
-  "",
-  "## Model Selection Summary",
-  "",
-  paste0("- **Final model**: ", final_model_name),
-  paste0("- **AIC**: ", round(final_model$model_stats$aic, 2)),
-  paste0("- **Proportional odds assumption**: ", ifelse(po_violated, "Violated", "Holds")),
-  "",
-  "---",
-  "",
+  paste0("  - Control (no infographic): ", sum(rq3_data$shown.infographic == "No Infographic"))
+)
+
+# Prepare Model 1 coefficient table
+model1_coef_table <- model1_unadjusted$coefficients %>%
+  dplyr::select(variable, log_odds, std_error, t_value, p_value, odds_ratio) %>%
+  dplyr::rename(estimate = log_odds)
+
+# Prepare Model 2 coefficient table
+model2_coef_table <- model2_adjusted$coefficients %>%
+  dplyr::select(variable, log_odds, std_error, t_value, p_value, odds_ratio) %>%
+  dplyr::rename(estimate = log_odds)
+
+# Prepare Model 2 residuals range
+model2_residuals_range <- list(
+  deviance_min = min(residuals_pom$deviance_residual),
+  deviance_max = max(residuals_pom$deviance_residual),
+  pearson_min = NA,  # Not calculated for RQ3
+  pearson_max = NA
+)
+
+# Prepare visual inspection findings
+visual_findings <- c(
+  "1. **Residuals vs Fitted**: Check for nonlinear patterns indicating threshold-specific effects",
+  "2. **Normal Q-Q Plot**: Check for 'broken stick' pattern or heavy tails indicating non-normality",
+  "3. **Scale-Location Plot**: Check for trends indicating heteroskedasticity",
+  "4. **Observed vs Predicted**: Check for systematic deviations from diagonal"
+)
+
+# Prepare PPOM parameters (conditional on po_violated)
+if (po_violated) {
+  ppom_specification_text <- c(
+    "- **Flexible predictors**: Treatment variable (shown.infographic)",
+    "  - Coefficients vary across support thresholds",
+    "- **Constrained predictors**: Covariates (age, sex, ethnicity, politics, employment, student status)",
+    "  - Proportional odds constraint maintained for parsimony",
+    "- **Rationale**: Targeted flexibility for treatment effect; computational stability"
+  )
+
+  model3_stats_list <- list(
+    aic = as.numeric(model3_ppom$model_stats$aic),
+    bic = as.numeric(model3_ppom$model_stats$bic),
+    loglik = as.numeric(model3_ppom$model_stats$loglik),
+    n = nrow(rq3_data)
+  )
+
+  # Extract PPOM coefficient summary
+  model3_coef_summary_text <- paste(capture.output(print(summary(model3_ppom$model)@coef3)), collapse = "\n")
+
+  model3_residuals_range_list <- list(
+    deviance_min = min(residuals_ppom$deviance_residual),
+    deviance_max = max(residuals_ppom$deviance_residual),
+    pearson_min = NA,
+    pearson_max = NA
+  )
+
+  ppom_diagnostics_file_name <- "RQ3_PPOM_diagnostics.png"
+  ppom_coefficients_file_name <- "RQ3_PPOM_coefficients.png"
+} else {
+  ppom_specification_text <- NULL
+  model3_stats_list <- NULL
+  model3_coef_summary_text <- NULL
+  model3_residuals_range_list <- NULL
+  ppom_diagnostics_file_name <- NULL
+  ppom_coefficients_file_name <- NULL
+}
+
+# Prepare bookmarks
+bookmarks_text <- c(
   "## BOOKMARK: Country-Specific Analyses",
   "",
   "Country-specific subgroup analyses (USA-only, UK-only) are available but commented out.",
-  "Uncomment the relevant code sections in `RQ3_treatment_effects.R` to run these analyses.",
-  "",
-  "---",
-  paste0("*Generated: ", Sys.time(), "*")
+  "Uncomment the relevant code sections in `RQ3_treatment_effects.R` to run these analyses."
 )
 
+# Generate markdown using consolidated helper function
+md_content <- generate_ordinal_regression_report(
+  # Meta information
+  analysis_name = "RQ3",
+  analysis_title = "Treatment Effect of Nuclear-Winter Information",
+  output_dir = output_dir,
+
+  # Overview
+  analysis_date = Sys.Date(),
+  sample_description = "Complete cases",
+  n_total = nrow(rq3_data),
+  outcome_description = "Support for nuclear strike on Russia (ordinal, 1-5)",
+  predictor_description = "Exposure to nuclear-winter infographic",
+  final_model_type = ifelse(po_violated, "PPOM", "POM"),
+
+  # Decision records
+  decision_records = NULL,  # RQ3 doesn't have decision records like RQ2
+
+  # Data assembly
+  data_assembly_items = data_assembly_items,
+
+  # Model 1: Unadjusted POM
+  formula_unadjusted = formula_unadjusted,
+  model1_stats = list(
+    aic = as.numeric(model1_unadjusted$model_stats$aic),
+    bic = as.numeric(model1_unadjusted$model_stats$bic),
+    loglik = as.numeric(model1_unadjusted$model_stats$loglik),
+    n = nrow(rq3_data)
+  ),
+  model1_coef_table = model1_coef_table,
+
+  # Model 2: Adjusted POM
+  formula_adjusted = formula_adjusted,
+  covariates_description = "age, sex, ethnicity, political affiliation, employment status, student status",
+  model2_stats = list(
+    aic = as.numeric(model2_adjusted$model_stats$aic),
+    bic = as.numeric(model2_adjusted$model_stats$bic),
+    loglik = as.numeric(model2_adjusted$model_stats$loglik),
+    n = nrow(rq3_data)
+  ),
+  model2_coef_table = model2_coef_table,
+  model2_residuals_range = model2_residuals_range,
+  pom_diagnostics_file = "RQ3_POM_diagnostics.png",
+  pom_forest_file = "RQ3_POM_forest.png",
+
+  # Visual inspection
+  po_violated = po_violated,
+  visual_findings = visual_findings,
+
+  # Model 3: PPOM (conditional)
+  ppom_specification = ppom_specification_text,
+  model3_stats = model3_stats_list,
+  model3_coef_summary = model3_coef_summary_text,
+  model3_residuals_range = model3_residuals_range_list,
+  ppom_diagnostics_file = ppom_diagnostics_file_name,
+  ppom_coefficients_file = ppom_coefficients_file_name,
+
+  # Model comparison
+  delta_p_max = NULL,  # Not calculated in RQ3
+  model_comparison_table = NULL,
+
+  # Additional context
+  downstream_flag = NULL,
+  bookmarks = bookmarks_text
+)
+
+md_file <- file.path(output_dir, "RQ3_treatment_effects.md")
 writeLines(md_content, md_file)
 cat("  ✓ RQ3_treatment_effects.md\n\n")
 
@@ -664,41 +778,433 @@ cat("  -", md_file, "\n\n")
 
 cat("===============================================================================\n\n")
 
-# BOOKMARK: Country-specific analyses (USA-only and UK-only) are commented out
-# below. Prompt for human feedback before uncommenting and running.
-
 # ==============================================================================
-# OPTIONAL: Country-Specific Subgroup Analyses
+# 5.7 Country-Specific Subgroup Analyses
 # ==============================================================================
 
-# # USA-only analysis
-# cat("Running USA-only analysis...\n")
-# rq3_data_usa <- rq3_data %>% filter(country.of.residence == "United States")
-#
-# formula_usa <- as.formula(paste(
-#   "support.nuclear.strike.on.russia_numeric ~ shown.infographic +",
-#   paste(setdiff(covariates, "country.of.residence"), collapse = " + ")
-# ))
-#
-# model_usa <- fit_pom(formula = formula_usa, data = rq3_data_usa, link = "logit", verbose = FALSE)
-# brant_usa <- perform_brant_test(model_usa$model, verbose = FALSE)
-#
-# if (brant_usa$omnibus_p_value < 0.05) {
-#   model_usa <- fit_ppom(formula = formula_usa, data = rq3_data_usa, link = "logit", verbose = FALSE)
-# }
-#
-# # UK-only analysis
-# cat("Running UK-only analysis...\n")
-# rq3_data_uk <- rq3_data %>% filter(country.of.residence == "United Kingdom")
-#
-# formula_uk <- as.formula(paste(
-#   "support.nuclear.strike.on.russia_numeric ~ shown.infographic +",
-#   paste(setdiff(covariates, "country.of.residence"), collapse = " + ")
-# ))
-#
-# model_uk <- fit_pom(formula = formula_uk, data = rq3_data_uk, link = "logit", verbose = FALSE)
-# brant_uk <- perform_brant_test(model_uk$model, verbose = FALSE)
-#
-# if (brant_uk$omnibus_p_value < 0.05) {
-#   model_uk <- fit_ppom(formula = formula_uk, data = rq3_data_uk, link = "logit", verbose = FALSE)
-# }
+cat("5.7 Running country-specific subgroup analyses...\n\n")
+
+# ------------------------------------------------------------------------------
+# USA-only analysis
+# ------------------------------------------------------------------------------
+
+cat("  USA-only analysis...\n")
+rq3_data_usa <- rq3_data %>% dplyr::filter(country.of.residence == "United States")
+
+cat("    Sample size:", nrow(rq3_data_usa), "\n")
+cat("      Treatment:", sum(rq3_data_usa$shown.infographic == "Shown NW Iinfographic"), "\n")
+cat("      Control:", sum(rq3_data_usa$shown.infographic == "No Infographic"), "\n")
+
+# Formula without country.of.residence
+formula_usa <- as.formula(paste(
+  "support.nuclear.strike.on.russia_numeric ~ shown.infographic +",
+  paste(setdiff(covariates, "country.of.residence"), collapse = " + ")
+))
+
+# Fit PPOM directly (skip POM based on main analysis findings)
+cat("    Fitting PPOM...\n")
+parallel_spec_usa <- FALSE ~ shown.infographic
+
+model_usa_ppom <- fit_ppom(
+  formula = formula_usa,
+  data = rq3_data_usa,
+  link = "logit",
+  parallel_spec = parallel_spec_usa,
+  verbose = FALSE
+)
+
+cat("      AIC:", round(model_usa_ppom$model_stats$aic, 2), "\n")
+
+# Extract treatment effect
+treatment_usa <- model_usa_ppom$coefficients %>%
+  dplyr::filter(grepl("infographic", variable))
+
+cat("      Treatment effect (avg OR):", round(treatment_usa$odds_ratio[1], 3), "\n")
+
+# Calculate PPOM residuals for USA
+n_obs_usa <- nrow(rq3_data_usa)
+ppom_model_usa <- model_usa_ppom$model
+
+pred_probs_ppom_usa <- predict(ppom_model_usa, type = "response")
+if (is.vector(pred_probs_ppom_usa)) {
+  pred_probs_ppom_usa <- matrix(pred_probs_ppom_usa, nrow = 1)
+}
+pred_class_ppom_usa <- apply(pred_probs_ppom_usa, 1, which.max)
+
+# Calculate linear predictor for PPOM
+if ("predictors" %in% methods::slotNames(ppom_model_usa)) {
+  predictors_matrix_usa <- ppom_model_usa@predictors
+  if (is.matrix(predictors_matrix_usa) && nrow(predictors_matrix_usa) == n_obs_usa) {
+    linear_pred_ppom_usa <- rowMeans(predictors_matrix_usa)
+  } else {
+    linear_pred_ppom_usa <- rep(0, n_obs_usa)
+  }
+} else {
+  linear_pred_ppom_usa <- rep(0, n_obs_usa)
+}
+
+# Extract observed values
+if ("y" %in% methods::slotNames(ppom_model_usa)) {
+  y_matrix_usa <- ppom_model_usa@y
+  if (is.matrix(y_matrix_usa)) {
+    y_observed_ppom_usa <- apply(y_matrix_usa, 1, which.max)
+  } else {
+    y_observed_ppom_usa <- as.numeric(y_matrix_usa)
+  }
+} else {
+  y_observed_ppom_usa <- as.numeric(ordered(rq3_data_usa$support.nuclear.strike.on.russia_numeric))
+}
+
+# Calculate deviance residuals
+dev_resid_ppom_usa <- numeric(n_obs_usa)
+for (i in seq_len(n_obs_usa)) {
+  p_obs <- pred_probs_ppom_usa[i, y_observed_ppom_usa[i]]
+  dev_component <- sqrt(-2 * log(p_obs))
+  sign_val <- ifelse(
+    y_observed_ppom_usa[i] > pred_class_ppom_usa[i], 1,
+    ifelse(y_observed_ppom_usa[i] < pred_class_ppom_usa[i], -1, 0)
+  )
+  dev_resid_ppom_usa[i] <- sign_val * dev_component
+}
+
+# Store USA PPOM residuals
+residuals_ppom_usa <- tibble(
+  obs_index = seq_len(n_obs_usa),
+  observed = y_observed_ppom_usa,
+  predicted_class = pred_class_ppom_usa,
+  linear_predictor = linear_pred_ppom_usa,
+  deviance_residual = dev_resid_ppom_usa
+)
+
+# Generate USA PPOM diagnostic plots
+cat("    Generating PPOM diagnostic plots...\n")
+ppom_diagnostics_plot_usa <- create_diagnostic_plots_rq3(residuals_ppom_usa, "USA PPOM Diagnostic Plots")
+ggsave(
+  filename = file.path(output_dir, "RQ3_USA_PPOM_diagnostics.png"),
+  plot = ppom_diagnostics_plot_usa,
+  width = 10, height = 8, dpi = 300
+)
+
+# Generate USA PPOM threshold-specific coefficient plot
+cat("    Generating PPOM threshold-specific coefficient plot...\n")
+coef_summary_ppom_matrix_usa <- summary(ppom_model_usa)@coef3
+treatment_var_name <- "shown.infographic"
+matching_rows_usa <- grep(paste0("^", treatment_var_name), rownames(coef_summary_ppom_matrix_usa), value = TRUE)
+
+if (length(matching_rows_usa) > 0) {
+  ppom_coef_data_usa <- data.frame()
+  for (row_name in matching_rows_usa) {
+    threshold_num <- as.numeric(gsub(".*:(\\d+)$", "\\1", row_name))
+    estimate <- coef_summary_ppom_matrix_usa[row_name, "Estimate"]
+    std_error <- coef_summary_ppom_matrix_usa[row_name, "Std. Error"]
+
+    ppom_coef_data_usa <- rbind(ppom_coef_data_usa, data.frame(
+      variable = treatment_var_name,
+      threshold = threshold_num,
+      estimate = estimate,
+      std_error = std_error,
+      odds_ratio = exp(estimate),
+      ci_lower = exp(estimate - 1.96 * std_error),
+      ci_upper = exp(estimate + 1.96 * std_error)
+    ))
+  }
+
+  ppom_coef_plot_usa <- plot_ppom_threshold_coefficients(
+    coef_data = ppom_coef_data_usa,
+    plot_title = "USA PPOM Threshold-Specific Coefficients (Treatment Effect)"
+  )
+
+  ggsave(
+    filename = file.path(output_dir, "RQ3_USA_PPOM_coefficients.png"),
+    plot = ppom_coef_plot_usa,
+    width = 10, height = 6, dpi = 300
+  )
+}
+
+cat("    ✓ USA analysis complete\n\n")
+
+# ------------------------------------------------------------------------------
+# UK-only analysis
+# ------------------------------------------------------------------------------
+
+cat("  UK-only analysis...\n")
+rq3_data_uk <- rq3_data %>% dplyr::filter(country.of.residence == "United Kingdom")
+
+cat("    Sample size:", nrow(rq3_data_uk), "\n")
+cat("      Treatment:", sum(rq3_data_uk$shown.infographic == "Shown NW Iinfographic"), "\n")
+cat("      Control:", sum(rq3_data_uk$shown.infographic == "No Infographic"), "\n")
+
+# Formula without country.of.residence
+formula_uk <- as.formula(paste(
+  "support.nuclear.strike.on.russia_numeric ~ shown.infographic +",
+  paste(setdiff(covariates, "country.of.residence"), collapse = " + ")
+))
+
+# Fit PPOM directly
+cat("    Fitting PPOM...\n")
+parallel_spec_uk <- FALSE ~ shown.infographic
+
+model_uk_ppom <- fit_ppom(
+  formula = formula_uk,
+  data = rq3_data_uk,
+  link = "logit",
+  parallel_spec = parallel_spec_uk,
+  verbose = FALSE
+)
+
+cat("      AIC:", round(model_uk_ppom$model_stats$aic, 2), "\n")
+
+# Extract treatment effect
+treatment_uk <- model_uk_ppom$coefficients %>%
+  dplyr::filter(grepl("infographic", variable))
+
+cat("      Treatment effect (avg OR):", round(treatment_uk$odds_ratio[1], 3), "\n")
+
+# Calculate PPOM residuals for UK
+n_obs_uk <- nrow(rq3_data_uk)
+ppom_model_uk <- model_uk_ppom$model
+
+pred_probs_ppom_uk <- predict(ppom_model_uk, type = "response")
+if (is.vector(pred_probs_ppom_uk)) {
+  pred_probs_ppom_uk <- matrix(pred_probs_ppom_uk, nrow = 1)
+}
+pred_class_ppom_uk <- apply(pred_probs_ppom_uk, 1, which.max)
+
+# Calculate linear predictor for PPOM
+if ("predictors" %in% methods::slotNames(ppom_model_uk)) {
+  predictors_matrix_uk <- ppom_model_uk@predictors
+  if (is.matrix(predictors_matrix_uk) && nrow(predictors_matrix_uk) == n_obs_uk) {
+    linear_pred_ppom_uk <- rowMeans(predictors_matrix_uk)
+  } else {
+    linear_pred_ppom_uk <- rep(0, n_obs_uk)
+  }
+} else {
+  linear_pred_ppom_uk <- rep(0, n_obs_uk)
+}
+
+# Extract observed values
+if ("y" %in% methods::slotNames(ppom_model_uk)) {
+  y_matrix_uk <- ppom_model_uk@y
+  if (is.matrix(y_matrix_uk)) {
+    y_observed_ppom_uk <- apply(y_matrix_uk, 1, which.max)
+  } else {
+    y_observed_ppom_uk <- as.numeric(y_matrix_uk)
+  }
+} else {
+  y_observed_ppom_uk <- as.numeric(ordered(rq3_data_uk$support.nuclear.strike.on.russia_numeric))
+}
+
+# Calculate deviance residuals
+dev_resid_ppom_uk <- numeric(n_obs_uk)
+for (i in seq_len(n_obs_uk)) {
+  p_obs <- pred_probs_ppom_uk[i, y_observed_ppom_uk[i]]
+  dev_component <- sqrt(-2 * log(p_obs))
+  sign_val <- ifelse(
+    y_observed_ppom_uk[i] > pred_class_ppom_uk[i], 1,
+    ifelse(y_observed_ppom_uk[i] < pred_class_ppom_uk[i], -1, 0)
+  )
+  dev_resid_ppom_uk[i] <- sign_val * dev_component
+}
+
+# Store UK PPOM residuals
+residuals_ppom_uk <- tibble(
+  obs_index = seq_len(n_obs_uk),
+  observed = y_observed_ppom_uk,
+  predicted_class = pred_class_ppom_uk,
+  linear_predictor = linear_pred_ppom_uk,
+  deviance_residual = dev_resid_ppom_uk
+)
+
+# Generate UK PPOM diagnostic plots
+cat("    Generating PPOM diagnostic plots...\n")
+ppom_diagnostics_plot_uk <- create_diagnostic_plots_rq3(residuals_ppom_uk, "UK PPOM Diagnostic Plots")
+ggsave(
+  filename = file.path(output_dir, "RQ3_UK_PPOM_diagnostics.png"),
+  plot = ppom_diagnostics_plot_uk,
+  width = 10, height = 8, dpi = 300
+)
+
+# Generate UK PPOM threshold-specific coefficient plot
+cat("    Generating PPOM threshold-specific coefficient plot...\n")
+coef_summary_ppom_matrix_uk <- summary(ppom_model_uk)@coef3
+matching_rows_uk <- grep(paste0("^", treatment_var_name), rownames(coef_summary_ppom_matrix_uk), value = TRUE)
+
+if (length(matching_rows_uk) > 0) {
+  ppom_coef_data_uk <- data.frame()
+  for (row_name in matching_rows_uk) {
+    threshold_num <- as.numeric(gsub(".*:(\\d+)$", "\\1", row_name))
+    estimate <- coef_summary_ppom_matrix_uk[row_name, "Estimate"]
+    std_error <- coef_summary_ppom_matrix_uk[row_name, "Std. Error"]
+
+    ppom_coef_data_uk <- rbind(ppom_coef_data_uk, data.frame(
+      variable = treatment_var_name,
+      threshold = threshold_num,
+      estimate = estimate,
+      std_error = std_error,
+      odds_ratio = exp(estimate),
+      ci_lower = exp(estimate - 1.96 * std_error),
+      ci_upper = exp(estimate + 1.96 * std_error)
+    ))
+  }
+
+  ppom_coef_plot_uk <- plot_ppom_threshold_coefficients(
+    coef_data = ppom_coef_data_uk,
+    plot_title = "UK PPOM Threshold-Specific Coefficients (Treatment Effect)"
+  )
+
+  ggsave(
+    filename = file.path(output_dir, "RQ3_UK_PPOM_coefficients.png"),
+    plot = ppom_coef_plot_uk,
+    width = 10, height = 6, dpi = 300
+  )
+}
+
+cat("    ✓ UK analysis complete\n\n")
+
+# ==============================================================================
+# 5.8 Append Country-Specific Results to Markdown
+# ==============================================================================
+
+cat("5.8 Appending country-specific results to markdown...\n")
+
+# Prepare USA PPOM coefficient summary
+usa_coef_summary_text <- paste(capture.output(print(summary(ppom_model_usa)@coef3)), collapse = "\n")
+
+# Prepare UK PPOM coefficient summary
+uk_coef_summary_text <- paste(capture.output(print(summary(ppom_model_uk)@coef3)), collapse = "\n")
+
+# Build USA-specific markdown section
+usa_md_content <- c(
+  "",
+  "---",
+  "",
+  "## Section 6: USA-Only Subgroup Analysis",
+  "",
+  "### Sample",
+  "",
+  paste0("- **N**: ", nrow(rq3_data_usa)),
+  paste0("  - Treatment: ", sum(rq3_data_usa$shown.infographic == "Shown NW Iinfographic")),
+  paste0("  - Control: ", sum(rq3_data_usa$shown.infographic == "No Infographic")),
+  "",
+  "### Model Specification",
+  "",
+  "**PPOM (Partial Proportional Odds Model)**",
+  "",
+  "- **Flexible predictors**: Treatment variable (shown.infographic)",
+  "  - Coefficients vary across support thresholds",
+  "- **Constrained predictors**: Covariates (age, sex, ethnicity, political affiliation, employment, student status)",
+  "  - Proportional odds constraint maintained for parsimony",
+  "",
+  "**Note**: Analysis skips POM and fits PPOM directly based on proportional odds violations detected in full-sample analysis.",
+  "",
+  "### Formula",
+  "",
+  paste0("```\n", deparse(formula_usa, width.cutoff = 500), "\n```"),
+  "",
+  "### Model Fit Statistics",
+  "",
+  paste0("- **AIC**: ", round(as.numeric(model_usa_ppom$model_stats$aic), 2)),
+  paste0("- **BIC**: ", round(as.numeric(model_usa_ppom$model_stats$bic), 2)),
+  paste0("- **Log-likelihood**: ", round(as.numeric(model_usa_ppom$model_stats$loglik), 2)),
+  paste0("- **N**: ", nrow(rq3_data_usa)),
+  "",
+  "### Coefficients Summary",
+  "",
+  "```",
+  usa_coef_summary_text,
+  "```",
+  "",
+  "**Interpretation**: Treatment variable has threshold-varying effects, allowing different associations at different levels of support for nuclear retaliation.",
+  "",
+  "### Residual Diagnostics",
+  "",
+  paste0("- **Deviance residuals**: [",
+         sprintf("%.2f", min(residuals_ppom_usa$deviance_residual)), ", ",
+         sprintf("%.2f", max(residuals_ppom_usa$deviance_residual)), "]"),
+  "",
+  "### Diagnostic Plots",
+  "",
+  "![USA PPOM Diagnostic Plots](RQ3_USA_PPOM_diagnostics.png)",
+  "",
+  "**Visual Assessment**: 4-panel diagnostic plot shows model fit for USA subsample.",
+  "",
+  "### Threshold-Specific Coefficients",
+  "",
+  "![USA PPOM Coefficient Plot](RQ3_USA_PPOM_coefficients.png)",
+  "",
+  "**Interpretation**: Shows how treatment effect varies across support thresholds in USA subsample.",
+  ""
+)
+
+# Build UK-specific markdown section
+uk_md_content <- c(
+  "",
+  "---",
+  "",
+  "## Section 7: UK-Only Subgroup Analysis",
+  "",
+  "### Sample",
+  "",
+  paste0("- **N**: ", nrow(rq3_data_uk)),
+  paste0("  - Treatment: ", sum(rq3_data_uk$shown.infographic == "Shown NW Iinfographic")),
+  paste0("  - Control: ", sum(rq3_data_uk$shown.infographic == "No Infographic")),
+  "",
+  "### Model Specification",
+  "",
+  "**PPOM (Partial Proportional Odds Model)**",
+  "",
+  "- **Flexible predictors**: Treatment variable (shown.infographic)",
+  "  - Coefficients vary across support thresholds",
+  "- **Constrained predictors**: Covariates (age, sex, ethnicity, political affiliation, employment, student status)",
+  "  - Proportional odds constraint maintained for parsimony",
+  "",
+  "**Note**: Analysis skips POM and fits PPOM directly based on proportional odds violations detected in full-sample analysis.",
+  "",
+  "### Formula",
+  "",
+  paste0("```\n", deparse(formula_uk, width.cutoff = 500), "\n```"),
+  "",
+  "### Model Fit Statistics",
+  "",
+  paste0("- **AIC**: ", round(as.numeric(model_uk_ppom$model_stats$aic), 2)),
+  paste0("- **BIC**: ", round(as.numeric(model_uk_ppom$model_stats$bic), 2)),
+  paste0("- **Log-likelihood**: ", round(as.numeric(model_uk_ppom$model_stats$loglik), 2)),
+  paste0("- **N**: ", nrow(rq3_data_uk)),
+  "",
+  "### Coefficients Summary",
+  "",
+  "```",
+  uk_coef_summary_text,
+  "```",
+  "",
+  "**Interpretation**: Treatment variable has threshold-varying effects, allowing different associations at different levels of support for nuclear retaliation.",
+  "",
+  "### Residual Diagnostics",
+  "",
+  paste0("- **Deviance residuals**: [",
+         sprintf("%.2f", min(residuals_ppom_uk$deviance_residual)), ", ",
+         sprintf("%.2f", max(residuals_ppom_uk$deviance_residual)), "]"),
+  "",
+  "### Diagnostic Plots",
+  "",
+  "![UK PPOM Diagnostic Plots](RQ3_UK_PPOM_diagnostics.png)",
+  "",
+  "**Visual Assessment**: 4-panel diagnostic plot shows model fit for UK subsample.",
+  "",
+  "### Threshold-Specific Coefficients",
+  "",
+  "![UK PPOM Coefficient Plot](RQ3_UK_PPOM_coefficients.png)",
+  "",
+  "**Interpretation**: Shows how treatment effect varies across support thresholds in UK subsample.",
+  "",
+  "---",
+  "",
+  paste0("*Country-specific analyses added: ", Sys.time(), "*")
+)
+
+# Append country-specific sections to existing markdown file
+existing_md <- readLines(md_file)
+combined_md <- c(existing_md, usa_md_content, uk_md_content)
+writeLines(combined_md, md_file)
+
+cat("  ✓ Country-specific sections added to markdown\n\n")

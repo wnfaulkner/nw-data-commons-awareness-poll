@@ -41,7 +41,7 @@ cat("Output directory:", output_dir, "\n\n")
 cat("6.1 Constructing decision factor items...\n")
 
 rq4_decision_items <- data.tb %>%
-  select(
+  dplyr::select(
     participant.id,
     decision.reduce.russian.retaliation_numeric,
     decision.punish.russia.signal.aggressors_numeric,
@@ -49,18 +49,18 @@ rq4_decision_items <- data.tb %>%
     decision.avoid.killing.civilians.global.famine_numeric,
     decision.avoid.escalation_numeric
   ) %>%
-  filter(if_any(starts_with("decision."), ~ !is.na(.)))
+  dplyr::filter(if_any(starts_with("decision."), ~ !is.na(.)))
 
 cat("  Sample size (with at least one decision factor response):", nrow(rq4_decision_items), "\n\n")
 
 # Count complete cases (all 5 items)
 complete_cases <- rq4_decision_items %>%
-  filter(complete.cases(.))
+  dplyr::filter(complete.cases(.))
 
 cat("  Complete cases (all 5 items):", nrow(complete_cases), "\n")
 
 # Create matrix for analysis (excluding ID column)
-decision_matrix <- as.matrix(complete_cases %>% select(-participant.id))
+decision_matrix <- as.matrix(complete_cases %>% dplyr::select(-participant.id))
 
 # Item names for cleaner output
 item_short_names <- c(
@@ -82,15 +82,15 @@ cat("6.2 Computing descriptive profiles...\n")
 # Join with support variable
 decision_with_support <- complete_cases %>%
   left_join(
-    data.tb %>% select(participant.id, support.nuclear.strike.on.russia_numeric),
+    data.tb %>% dplyr::select(participant.id, support.nuclear.strike.on.russia_numeric),
     by = "participant.id"
   )
 
 # Calculate means by support level
 decision_by_support <- decision_with_support %>%
-  filter(!is.na(support.nuclear.strike.on.russia_numeric)) %>%
-  group_by(support.nuclear.strike.on.russia_numeric) %>%
-  summarise(
+  dplyr::filter(!is.na(support.nuclear.strike.on.russia_numeric)) %>%
+  dplyr::group_by(support.nuclear.strike.on.russia_numeric) %>%
+  dplyr::summarise(
     n = n(),
     reduce_retaliation = mean(decision.reduce.russian.retaliation_numeric, na.rm = TRUE),
     punish_signal = mean(decision.punish.russia.signal.aggressors_numeric, na.rm = TRUE),
@@ -106,8 +106,8 @@ cat("\n")
 
 # Calculate overall descriptives
 decision_descriptives <- decision_with_support %>%
-  select(starts_with("decision.")) %>%
-  summarise(across(everything(), list(
+  dplyr::select(starts_with("decision.")) %>%
+  dplyr::summarise(across(everything(), list(
     mean = ~mean(., na.rm = TRUE),
     sd = ~sd(., na.rm = TRUE),
     min = ~min(., na.rm = TRUE),
