@@ -1,0 +1,175 @@
+{
+  "project": "Nuclear Winter Data Commons Awareness Poll Analysis",
+  "last_updated": "2025-12-17",
+  "session_summary": {
+    "date": "2025-12-17",
+    "major_accomplishments": [
+      "Completed country-specific subgroup analyses for RQ3 (USA-only and UK-only PPOM models)",
+      "Fixed RQ4 namespace conflicts (added dplyr:: prefixes)",
+      "Verified full pipeline execution (RQ1 → RQ2 → RQ3 with country-specific → RQ4)",
+      "Committed changes: country-specific analyses and namespace fixes",
+      "Restructured RQ2 markdown output to side-by-side comparison format",
+      "Initiated RQ3 markdown restructuring (partial completion)"
+    ],
+    "work_in_progress": [
+      "RQ3 markdown restructuring to side-by-side comparison format (5 models: Unadjusted POM, Adjusted POM, Full PPOM, USA PPOM, UK PPOM)"
+    ],
+    "pending_tasks": [
+      "Complete RQ3 markdown restructuring",
+      "Test full pipeline with new markdown formats",
+      "Git commit markdown restructuring changes"
+    ]
+  },
+  "markdown_restructuring_specification": {
+    "goal": "Reorganize RQ2 & RQ3 markdown files to make models easy to compare side-by-side",
+    "new_structure": {
+      "section_1": "Sample Sizes - Table with rows for each model, columns for Complete Cases/Treatment/Control",
+      "section_2": "Model Formulas - Display formulas for each model with specification details",
+      "section_3": "Model Fit Statistics - Table with models as rows, statistics as columns (AIC, BIC, Log-Likelihood, N, Δ AIC vs POM)",
+      "section_4": "Model Coefficients - Table with variables as rows (including threshold-specific), models as columns, estimates only (no SE or p-values), no intercepts",
+      "section_5": "Diagnostic Plots - All diagnostic plots stacked vertically",
+      "section_6": "Forest Plots and Coefficient Plots - POM forest plots and PPOM threshold-specific coefficient plots stacked vertically"
+    },
+    "implementation_notes": {
+      "rq2_status": "Completed - New format implemented",
+      "rq3_status": "In progress - Complex due to 5 models (main analysis + 2 country-specific subgroups)",
+      "rq3_integration": "Country-specific analyses (USA, UK) integrated into main tables rather than separate sections",
+      "overview_condensed": "Overview and Data Assembly condensed into single section with sample size table"
+    }
+  },
+  "project_structure": {
+    "research_questions": {
+      "RQ1": {
+        "title": "Structure of Nuclear-Winter Awareness",
+        "status": "Complete",
+        "output": "outputs/RQ1_awareness_structure.md",
+        "models": ["Factor Analysis"],
+        "key_finding": "α = 0.699, 56.7% variance explained (questionable internal consistency)"
+      },
+      "RQ2": {
+        "title": "Using Awareness as Associational Predictor",
+        "status": "Complete - Markdown restructured",
+        "output": "outputs/RQ2_awareness_support.md",
+        "models": [
+          "Model 1: POM (Proportional Odds Model)",
+          "Model 2: PPOM (Partial Proportional Odds Model)"
+        ],
+        "sample": "Treatment group only (N=1066)",
+        "key_finding": "Visual inspection shows 4/4 clear PO violations, PPOM selected (Δ AIC = -13.82)"
+      },
+      "RQ3": {
+        "title": "Treatment Effect of Nuclear-Winter Information",
+        "status": "Complete - Markdown restructuring in progress",
+        "output": "outputs/RQ3_treatment_effects.md",
+        "models": [
+          "Model 1: Unadjusted POM",
+          "Model 2: Adjusted POM",
+          "Model 3: Adjusted PPOM",
+          "Model 4: USA-only PPOM",
+          "Model 5: UK-only PPOM"
+        ],
+        "sample": "Full sample (N=2213), USA subsample (N=1053), UK subsample (N=1160)",
+        "key_finding": "PO violations detected, PPOM fitted. Country-specific analyses show USA OR=1.301, UK OR=1.091"
+      },
+      "RQ4": {
+        "title": "Decision Factors Structure via EFA",
+        "status": "Complete",
+        "output": "outputs/RQ4_decision_factors_structure.md",
+        "models": ["1-factor", "2-factor", "3-factor EFA solutions"],
+        "key_finding": "1-factor: 34.3%, 2-factor: 61.6%, 3-factor: 62.3% variance explained"
+      }
+    },
+    "key_files": {
+      "analysis_scripts": [
+        "scripts/publication_analysis.R - Main orchestration script",
+        "scripts/b.analysis/RQ1_awareness_structure.R",
+        "scripts/b.analysis/RQ2_awareness_support.R - Restructured markdown generation",
+        "scripts/b.analysis/RQ3_treatment_effects.R - Country-specific analyses added, markdown restructuring in progress",
+        "scripts/b.analysis/RQ4_decision_factors_structure.R - Namespace conflicts fixed"
+      ],
+      "helper_functions": [
+        "scripts/c.helper_functions/01_config_loader.R",
+        "scripts/c.helper_functions/02_data_processor.R",
+        "scripts/c.helper_functions/03_regression_core.R",
+        "scripts/c.helper_functions/04_regression_diagnostics.R",
+        "scripts/c.helper_functions/05_plotting.R - Enhanced with normal curve forest plots",
+        "scripts/c.helper_functions/08_markdown_reports.R - Consolidated reporting function"
+      ],
+      "output_markdown": [
+        "outputs/RQ1_awareness_structure.md",
+        "outputs/RQ2_awareness_support.md - New side-by-side format",
+        "outputs/RQ3_treatment_effects.md - Country-specific sections appended, restructuring pending",
+        "outputs/RQ4_decision_factors_structure.md"
+      ],
+      "output_plots": [
+        "outputs/RQ2_POM_diagnostics.png",
+        "outputs/RQ2_POM_forest.png",
+        "outputs/RQ2_PPOM_diagnostics.png",
+        "outputs/RQ2_PPOM_coefficients.png",
+        "outputs/RQ3_POM_diagnostics.png",
+        "outputs/RQ3_POM_forest.png",
+        "outputs/RQ3_PPOM_diagnostics.png",
+        "outputs/RQ3_PPOM_coefficients.png",
+        "outputs/RQ3_USA_PPOM_diagnostics.png",
+        "outputs/RQ3_USA_PPOM_coefficients.png",
+        "outputs/RQ3_UK_PPOM_diagnostics.png",
+        "outputs/RQ3_UK_PPOM_coefficients.png"
+      ]
+    }
+  },
+  "recent_commits": [
+    {
+      "hash": "91931a3",
+      "date": "2025-12-17",
+      "message": "adds country-specific subgroup analyses for RQ3 and fixes namespace conflicts",
+      "changes": [
+        "USA-only and UK-only PPOM analyses in RQ3",
+        "Country-specific diagnostic plots and coefficient plots",
+        "Section 6 (USA) and Section 7 (UK) appended to RQ3 markdown",
+        "RQ4 namespace conflicts fixed (dplyr:: prefixes)",
+        "Consolidated markdown reporting function added (08_markdown_reports.R)",
+        "Enhanced plotting with normal curve forest plots and p-value opacity",
+        "Threshold-specific coefficient plots for PPOM"
+      ]
+    }
+  ],
+  "technical_notes": {
+    "modeling_approach": {
+      "ordinal_regression": "MASS::polr for POM, VGAM::vglm for PPOM",
+      "assumption_testing": "Visual inspection workflow per DEC-007 (Brant test bypassed)",
+      "ppom_specification": "Flexible predictors for key variables (awareness/treatment), constrained covariates for parsimony",
+      "diagnostic_plots": "4-panel: Residuals vs Fitted, Normal Q-Q, Scale-Location, Observed vs Predicted"
+    },
+    "visualization_enhancements": {
+      "forest_plots": "Normal curves with p-value-based opacity instead of error bars",
+      "ppom_coefficients": "Threshold-specific plots with normal curves, axes swapped for readability"
+    },
+    "namespace_management": {
+      "issue": "Function conflicts between dplyr, data.table, stats packages",
+      "solution": "Explicit namespace prefixes (dplyr::select, dplyr::filter, etc.)"
+    }
+  },
+  "decision_records": {
+    "DEC-001": "Variable collapsing for convergence (political affiliation: 11→4 levels; ethnicity: 5→3 levels)",
+    "DEC-006": "Model 1 (separate awareness items) selected over mean index for RQ2",
+    "DEC-007": "Visual inspection workflow for PO assumption testing; Brant test bypassed",
+    "DEC-008": "Single linear narrative output structure (POM → visual inspection → PPOM)",
+    "DEC-009": "Direct VGAM/MASS implementation; minimal abstraction for transparency"
+  },
+  "next_session_priorities": [
+    "Complete RQ3 markdown restructuring (integrate 5 models into side-by-side format)",
+    "Test full pipeline with new markdown formats",
+    "Review and commit markdown restructuring changes",
+    "Consider: RQ5 implementation if all prior RQs are finalized"
+  ],
+  "context_for_continuation": {
+    "where_we_left_off": "RQ2 markdown restructuring completed. RQ3 restructuring initiated but not finished due to complexity (5 models to integrate). Code changes made to RQ2 script (scripts/b.analysis/RQ2_awareness_support.R) but RQ3 script still uses old format.",
+    "files_modified_this_session": [
+      "scripts/b.analysis/RQ2_awareness_support.R - Complete rewrite of markdown generation section (lines ~633-791)"
+    ],
+    "files_need_modification": [
+      "scripts/b.analysis/RQ3_treatment_effects.R - Section 5.6 (markdown generation) and Section 5.8 (country-specific append) need complete rewrite"
+    ],
+    "testing_required": "Full pipeline run after completing RQ3 restructuring to verify both RQ2 and RQ3 generate correctly formatted markdown"
+  }
+}
