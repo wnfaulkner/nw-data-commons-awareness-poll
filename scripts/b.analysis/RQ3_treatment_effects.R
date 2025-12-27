@@ -31,10 +31,14 @@ suppressMessages({
   library(grid)
 })
 
-# Create output directory (simple, no timestamps)
+# Create output directories
 output_dir <- "outputs"
+output_dir_images <- file.path(output_dir, "RQ3 Images")
 if (!dir.exists(output_dir)) {
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+}
+if (!dir.exists(output_dir_images)) {
+  dir.create(output_dir_images, recursive = TRUE, showWarnings = FALSE)
 }
 
 cat("\n===============================================================================\n")
@@ -508,7 +512,7 @@ residuals_pom <- tibble(
 cat("  - Creating POM diagnostic plots...\n")
 pom_diagnostics_plot <- create_diagnostic_plots_rq3(residuals_pom, "POM Diagnostic Plots")
 ggsave(
-  filename = file.path(output_dir, "RQ3_POM_diagnostics.png"),
+  filename = file.path(output_dir_images, "RQ3_POM_diagnostics.png"),
   plot = pom_diagnostics_plot,
   width = 10, height = 8, dpi = 300
 )
@@ -538,7 +542,7 @@ pom_result_for_plot <- list(
 pom_forest <- plot_pom_coefficients(pom_result_for_plot, plot_title = "POM Coefficients (Adjusted Model)")
 
 ggsave(
-  filename = file.path(output_dir, "RQ3_POM_forest.png"),
+  filename = file.path(output_dir_images, "RQ3_POM_forest.png"),
   plot = pom_forest,
   width = 10, height = 6, dpi = 300
 )
@@ -550,7 +554,7 @@ if (po_violated) {
   cat("  - Creating PPOM diagnostic plots...\n")
   ppom_diagnostics_plot <- create_diagnostic_plots_rq3(residuals_ppom, "PPOM Diagnostic Plots")
   ggsave(
-    filename = file.path(output_dir, "RQ3_PPOM_diagnostics.png"),
+    filename = file.path(output_dir_images, "RQ3_PPOM_diagnostics.png"),
     plot = ppom_diagnostics_plot,
     width = 10, height = 8, dpi = 300
   )
@@ -591,7 +595,7 @@ if (po_violated) {
     )
 
     ggsave(
-      filename = file.path(output_dir, "RQ3_PPOM_coefficients.png"),
+      filename = file.path(output_dir_images, "RQ3_PPOM_coefficients.png"),
       plot = ppom_coef_plot,
       width = 10, height = 6, dpi = 300
     )
@@ -606,154 +610,305 @@ cat("\n")
 # 5.6 Generate Markdown Output
 # ==============================================================================
 
-cat("5.6 Generating markdown report using consolidated helper function...\n")
+cat("5.6 Generating comprehensive markdown report...\n")
 
-# Prepare data assembly items
-data_assembly_items <- c(
-  paste0("- **Complete cases**: ", nrow(rq3_data)),
-  paste0("  - Treatment (shown infographic): ", sum(rq3_data$shown.infographic == "Shown NW Iinfographic")),
-  paste0("  - Control (no infographic): ", sum(rq3_data$shown.infographic == "No Infographic"))
-)
+# Extract POM coefficients for Models 1 and 2
+coef_summary_model1 <- summary(model1_unadjusted$model)$coefficients
+coef_summary_model2 <- summary(model2_adjusted$model)$coefficients
+n_levels <- length(unique(rq3_data$support.nuclear.strike.on.russia_numeric))
+n_thresholds <- n_levels - 1
 
-# Prepare Model 1 coefficient table
-model1_coef_table <- model1_unadjusted$coefficients %>%
-  dplyr::select(variable, log_odds, std_error, t_value, p_value, odds_ratio) %>%
-  dplyr::rename(estimate = log_odds)
+# Extract POM variable names (excluding thresholds)
+model1_vars <- rownames(coef_summary_model1)[1:(nrow(coef_summary_model1) - n_thresholds)]
+model2_vars <- rownames(coef_summary_model2)[1:(nrow(coef_summary_model2) - n_thresholds)]
 
-# Prepare Model 2 coefficient table
-model2_coef_table <- model2_adjusted$coefficients %>%
-  dplyr::select(variable, log_odds, std_error, t_value, p_value, odds_ratio) %>%
-  dplyr::rename(estimate = log_odds)
+# Build POM coefficient table (Models 1 & 2)
+all_pom_vars <- unique(c(model1_vars, model2_vars))
+pom_coef_table_rows <- c()
+for (var in all_pom_vars) {
+  # Model 1 coefficient
+  model1_coef <- if (var %in% model1_vars) {
+    sprintf("%.4f", coef_summary_model1[var, "Value"])
+  } else {
+    "—"
+  }
 
-# Prepare Model 2 residuals range
-model2_residuals_range <- list(
-  deviance_min = min(residuals_pom$deviance_residual),
-  deviance_max = max(residuals_pom$deviance_residual),
-  pearson_min = NA,  # Not calculated for RQ3
-  pearson_max = NA
-)
+  # Model 2 coefficient
+  model2_coef <- if (var %in% model2_vars) {
+    sprintf("%.4f", coef_summary_model2[var, "Value"])
+  } else {
+    "—"
+  }
 
-# Prepare visual inspection findings
-visual_findings <- c(
-  "1. **Residuals vs Fitted**: Check for nonlinear patterns indicating threshold-specific effects",
-  "2. **Normal Q-Q Plot**: Check for 'broken stick' pattern or heavy tails indicating non-normality",
-  "3. **Scale-Location Plot**: Check for trends indicating heteroskedasticity",
-  "4. **Observed vs Predicted**: Check for systematic deviations from diagonal"
-)
-
-# Prepare PPOM parameters (conditional on po_violated)
-if (po_violated) {
-  ppom_specification_text <- c(
-    "- **Flexible predictors**: Treatment variable (shown.infographic)",
-    "  - Coefficients vary across support thresholds",
-    "- **Constrained predictors**: Covariates (age, sex, ethnicity, politics, employment, student status)",
-    "  - Proportional odds constraint maintained for parsimony",
-    "- **Rationale**: Targeted flexibility for treatment effect; computational stability"
+  pom_coef_table_rows <- c(pom_coef_table_rows,
+    paste0("| ", var, " | ", model1_coef, " | ", model2_coef, " |")
   )
-
-  model3_stats_list <- list(
-    aic = as.numeric(model3_ppom$model_stats$aic),
-    bic = as.numeric(model3_ppom$model_stats$bic),
-    loglik = as.numeric(model3_ppom$model_stats$loglik),
-    n = nrow(rq3_data)
-  )
-
-  # Extract PPOM coefficient summary
-  model3_coef_summary_text <- paste(capture.output(print(summary(model3_ppom$model)@coef3)), collapse = "\n")
-
-  model3_residuals_range_list <- list(
-    deviance_min = min(residuals_ppom$deviance_residual),
-    deviance_max = max(residuals_ppom$deviance_residual),
-    pearson_min = NA,
-    pearson_max = NA
-  )
-
-  ppom_diagnostics_file_name <- "RQ3_PPOM_diagnostics.png"
-  ppom_coefficients_file_name <- "RQ3_PPOM_coefficients.png"
-} else {
-  ppom_specification_text <- NULL
-  model3_stats_list <- NULL
-  model3_coef_summary_text <- NULL
-  model3_residuals_range_list <- NULL
-  ppom_diagnostics_file_name <- NULL
-  ppom_coefficients_file_name <- NULL
 }
 
-# Prepare bookmarks
-bookmarks_text <- c(
-  "## BOOKMARK: Country-Specific Analyses",
-  "",
-  "Country-specific subgroup analyses (USA-only, UK-only) are available but commented out.",
-  "Uncomment the relevant code sections in `RQ3_treatment_effects.R` to run these analyses."
-)
+# Build PPOM coefficient table (Models 3, 4, 5) if po_violated
+ppom_coef_table_rows <- c()
+if (po_violated) {
+  # Extract PPOM coefficients for all three models
+  coef_summary_model3 <- summary(model3_ppom$model)@coef3
+  coef_summary_model4_usa <- summary(ppom_model_usa)@coef3
+  coef_summary_model5_uk <- summary(ppom_model_uk)@coef3
 
-# Generate markdown using consolidated helper function
-md_content <- generate_ordinal_regression_report(
-  # Meta information
-  analysis_name = "RQ3",
-  analysis_title = "Treatment Effect of Nuclear-Winter Information",
-  output_dir = output_dir,
+  # Get PPOM variable names (excluding intercepts)
+  model3_vars <- rownames(coef_summary_model3)[!grepl("^\\(Intercept\\)", rownames(coef_summary_model3))]
+  model4_vars <- rownames(coef_summary_model4_usa)[!grepl("^\\(Intercept\\)", rownames(coef_summary_model4_usa))]
+  model5_vars <- rownames(coef_summary_model5_uk)[!grepl("^\\(Intercept\\)", rownames(coef_summary_model5_uk))]
 
-  # Overview
-  analysis_date = Sys.Date(),
-  sample_description = "Complete cases",
-  n_total = nrow(rq3_data),
-  outcome_description = "Support for nuclear strike on Russia (ordinal, 1-5)",
-  predictor_description = "Exposure to nuclear-winter infographic",
-  final_model_type = ifelse(po_violated, "PPOM", "POM"),
+  # Collect all unique variable names
+  all_ppom_vars <- unique(c(model3_vars, model4_vars, model5_vars))
 
-  # Decision records
-  decision_records = NULL,  # RQ3 doesn't have decision records like RQ2
+  for (var in all_ppom_vars) {
+    # Model 3 coefficient
+    model3_coef <- if (var %in% model3_vars) {
+      sprintf("%.4f", coef_summary_model3[var, "Estimate"])
+    } else {
+      "—"
+    }
 
-  # Data assembly
-  data_assembly_items = data_assembly_items,
+    # Model 4 (USA) coefficient
+    model4_coef <- if (var %in% model4_vars) {
+      sprintf("%.4f", coef_summary_model4_usa[var, "Estimate"])
+    } else {
+      "—"
+    }
 
-  # Model 1: Unadjusted POM
-  formula_unadjusted = formula_unadjusted,
-  model1_stats = list(
-    aic = as.numeric(model1_unadjusted$model_stats$aic),
-    bic = as.numeric(model1_unadjusted$model_stats$bic),
-    loglik = as.numeric(model1_unadjusted$model_stats$loglik),
-    n = nrow(rq3_data)
-  ),
-  model1_coef_table = model1_coef_table,
+    # Model 5 (UK) coefficient
+    model5_coef <- if (var %in% model5_vars) {
+      sprintf("%.4f", coef_summary_model5_uk[var, "Estimate"])
+    } else {
+      "—"
+    }
 
-  # Model 2: Adjusted POM
-  formula_adjusted = formula_adjusted,
-  covariates_description = "age, sex, ethnicity, political affiliation, employment status, student status",
-  model2_stats = list(
-    aic = as.numeric(model2_adjusted$model_stats$aic),
-    bic = as.numeric(model2_adjusted$model_stats$bic),
-    loglik = as.numeric(model2_adjusted$model_stats$loglik),
-    n = nrow(rq3_data)
-  ),
-  model2_coef_table = model2_coef_table,
-  model2_residuals_range = model2_residuals_range,
-  pom_diagnostics_file = "RQ3_POM_diagnostics.png",
-  pom_forest_file = "RQ3_POM_forest.png",
-
-  # Visual inspection
-  po_violated = po_violated,
-  visual_findings = visual_findings,
-
-  # Model 3: PPOM (conditional)
-  ppom_specification = ppom_specification_text,
-  model3_stats = model3_stats_list,
-  model3_coef_summary = model3_coef_summary_text,
-  model3_residuals_range = model3_residuals_range_list,
-  ppom_diagnostics_file = ppom_diagnostics_file_name,
-  ppom_coefficients_file = ppom_coefficients_file_name,
-
-  # Model comparison
-  delta_p_max = NULL,  # Not calculated in RQ3
-  model_comparison_table = NULL,
-
-  # Additional context
-  downstream_flag = NULL,
-  bookmarks = bookmarks_text
-)
+    ppom_coef_table_rows <- c(ppom_coef_table_rows,
+      paste0("| ", var, " | ", model3_coef, " | ", model4_coef, " | ", model5_coef, " |")
+    )
+  }
+}
 
 md_file <- file.path(output_dir, "RQ3_treatment_effects.md")
+md_content <- c(
+  "# RQ3: Treatment Effect of Nuclear-Winter Information",
+  "",
+  "## Overview",
+  "",
+  paste0("- **Analysis date**: ", Sys.Date()),
+  "- **Sample**: Complete cases on treatment and outcome variables",
+  "- **Outcome**: Support for nuclear strike on Russia (ordinal, 1-5)",
+  "- **Treatment**: Exposure to nuclear-winter infographic",
+  paste0("- **Final model**: ", ifelse(po_violated, "PPOM", "POM")),
+  "",
+  "---",
+  "",
+  "## Section 1: Sample Sizes",
+  "",
+  "| Model | Complete Cases | Treatment | Control |",
+  "|-------|----------------|-----------|---------|",
+  paste0("| Model 1 (Unadjusted POM) | ", nrow(rq3_data), " | ",
+         sum(rq3_data$shown.infographic == "Shown NW Iinfographic"), " | ",
+         sum(rq3_data$shown.infographic == "No Infographic"), " |"),
+  paste0("| Model 2 (Adjusted POM) | ", nrow(rq3_data), " | ",
+         sum(rq3_data$shown.infographic == "Shown NW Iinfographic"), " | ",
+         sum(rq3_data$shown.infographic == "No Infographic"), " |"),
+  paste0("| Model 3 (Full PPOM) | ", nrow(rq3_data), " | ",
+         sum(rq3_data$shown.infographic == "Shown NW Iinfographic"), " | ",
+         sum(rq3_data$shown.infographic == "No Infographic"), " |"),
+  paste0("| Model 4 (USA PPOM) | ", nrow(rq3_data_usa), " | ",
+         sum(rq3_data_usa$shown.infographic == "Shown NW Iinfographic"), " | ",
+         sum(rq3_data_usa$shown.infographic == "No Infographic"), " |"),
+  paste0("| Model 5 (UK PPOM) | ", nrow(rq3_data_uk), " | ",
+         sum(rq3_data_uk$shown.infographic == "Shown NW Iinfographic"), " | ",
+         sum(rq3_data_uk$shown.infographic == "No Infographic"), " |"),
+  "",
+  "*Note: Models 1-3 use full sample; Models 4-5 are country-specific subgroups*",
+  "",
+  "---",
+  "",
+  "## Section 2: Model Formulas",
+  "",
+  "### Model 1: Unadjusted POM",
+  "",
+  "**Formula:**",
+  "```",
+  deparse(formula_unadjusted, width.cutoff = 500),
+  "```",
+  "",
+  "**Specification:**",
+  "- Proportional odds assumption: Treatment effect constant across thresholds",
+  "- No covariates",
+  "- Link: Logit",
+  "- Implementation: MASS::polr",
+  "",
+  "### Model 2: Adjusted POM",
+  "",
+  "**Formula:**",
+  "```",
+  deparse(formula_adjusted, width.cutoff = 500),
+  "```",
+  "",
+  "**Specification:**",
+  "- Proportional odds assumption: All coefficients constant across thresholds",
+  "- Covariates: age, sex, ethnicity, political affiliation, employment status, student status",
+  "- Link: Logit",
+  "- Implementation: MASS::polr",
+  "",
+  "### Model 3: Full PPOM",
+  "",
+  "**Formula:**",
+  "```",
+  deparse(formula_adjusted, width.cutoff = 500),
+  "```",
+  "",
+  "**Specification:**",
+  "- **Flexible predictors**: Treatment variable (shown.infographic)",
+  "  - Coefficients vary across support thresholds",
+  "- **Constrained predictors**: Covariates (age, sex, ethnicity, politics, employment, student status)",
+  "  - Proportional odds constraint maintained",
+  "- **Rationale**: Targeted flexibility for treatment effect; computational stability",
+  "- **Link**: Logit",
+  "- **Implementation**: VGAM::vglm",
+  "",
+  "### Models 4 & 5: Country-Specific PPOM",
+  "",
+  "**Formula:**",
+  "```",
+  "support.nuclear.strike.on.russia ~ shown.infographic +",
+  "                                    age + sex + ethnicity.collapsed +",
+  "                                    political.affiliation.collapsed +",
+  "                                    employment.status + student.status",
+  "```",
+  "",
+  "**Specification:**",
+  "- Model 4: USA subsample only",
+  "- Model 5: UK subsample only",
+  "- Same PPOM structure as Model 3",
+  "- Country.of.residence removed from covariates (constant within subsample)",
+  "",
+  "---",
+  "",
+  "## Section 3: Model Fit Statistics",
+  "",
+  "| Model | AIC | BIC | Log-Likelihood | N | Δ AIC (vs Model 2) |",
+  "|-------|-----|-----|----------------|---|---------------------|",
+  paste0("| Model 1 (Unadjusted POM) | ",
+         round(as.numeric(model1_unadjusted$model_stats$aic), 2), " | ",
+         round(as.numeric(model1_unadjusted$model_stats$bic), 2), " | ",
+         round(as.numeric(model1_unadjusted$model_stats$loglik), 2), " | ",
+         nrow(rq3_data), " | — |"),
+  paste0("| Model 2 (Adjusted POM) | ",
+         round(as.numeric(model2_adjusted$model_stats$aic), 2), " | ",
+         round(as.numeric(model2_adjusted$model_stats$bic), 2), " | ",
+         round(as.numeric(model2_adjusted$model_stats$loglik), 2), " | ",
+         nrow(rq3_data), " | — |"),
+  if (po_violated) {
+    c(
+      paste0("| Model 3 (Full PPOM) | ",
+             round(as.numeric(model3_ppom$model_stats$aic), 2), " | ",
+             round(as.numeric(model3_ppom$model_stats$bic), 2), " | ",
+             round(as.numeric(model3_ppom$model_stats$loglik), 2), " | ",
+             nrow(rq3_data), " | ",
+             round(as.numeric(model3_ppom$model_stats$aic) - as.numeric(model2_adjusted$model_stats$aic), 2), " |"),
+      paste0("| Model 4 (USA PPOM) | ",
+             round(as.numeric(model_usa_ppom$model_stats$aic), 2), " | ",
+             round(as.numeric(model_usa_ppom$model_stats$bic), 2), " | ",
+             round(as.numeric(model_usa_ppom$model_stats$loglik), 2), " | ",
+             nrow(rq3_data_usa), " | — |"),
+      paste0("| Model 5 (UK PPOM) | ",
+             round(as.numeric(model_uk_ppom$model_stats$aic), 2), " | ",
+             round(as.numeric(model_uk_ppom$model_stats$bic), 2), " | ",
+             round(as.numeric(model_uk_ppom$model_stats$loglik), 2), " | ",
+             nrow(rq3_data_uk), " | — |")
+    )
+  } else {
+    NULL
+  },
+  "",
+  "---",
+  "",
+  "## Section 4: Diagnostic Plots",
+  "",
+  "### Model 2 (Adjusted POM) Diagnostics",
+  "",
+  "![POM Diagnostic Plots](RQ3 Images/RQ3_POM_diagnostics.png)",
+  "",
+  if (po_violated) {
+    c(
+      "### Model 3 (Full PPOM) Diagnostics",
+      "",
+      "![Full PPOM Diagnostic Plots](RQ3 Images/RQ3_PPOM_diagnostics.png)",
+      "",
+      "### Model 4 (USA PPOM) Diagnostics",
+      "",
+      "![USA PPOM Diagnostic Plots](RQ3 Images/RQ3_USA_PPOM_diagnostics.png)",
+      "",
+      "### Model 5 (UK PPOM) Diagnostics",
+      "",
+      "![UK PPOM Diagnostic Plots](RQ3 Images/RQ3_UK_PPOM_diagnostics.png)",
+      ""
+    )
+  } else {
+    NULL
+  },
+  "---",
+  "",
+  "## Section 5: Model Coefficients",
+  "",
+  "### Table 5.1: POM Models (Models 1 & 2)",
+  "",
+  "*Table shows coefficient estimates only (no standard errors or p-values).*",
+  "",
+  "| Variable | Model 1 (Unadjusted) | Model 2 (Adjusted) |",
+  "|----------|----------------------|--------------------|",
+  pom_coef_table_rows,
+  "",
+  if (po_violated) {
+    c(
+      "### Table 5.2: PPOM Models (Models 3, 4, 5)",
+      "",
+      "*Table shows coefficient estimates only. PPOM coefficients vary by threshold (indicated by :1, :2, etc.).*",
+      "",
+      "| Variable | Model 3 (Full) | Model 4 (USA) | Model 5 (UK) |",
+      "|----------|----------------|---------------|--------------|",
+      ppom_coef_table_rows,
+      ""
+    )
+  } else {
+    NULL
+  },
+  "---",
+  "",
+  "## Section 6: Forest Plots and Coefficient Plots",
+  "",
+  "### Model 2 (Adjusted POM) Forest Plot",
+  "",
+  "![POM Forest Plot](RQ3 Images/RQ3_POM_forest.png)",
+  "",
+  if (po_violated) {
+    c(
+      "### Model 3 (Full PPOM) Threshold-Specific Coefficients",
+      "",
+      "![Full PPOM Coefficient Plot](RQ3 Images/RQ3_PPOM_coefficients.png)",
+      "",
+      "### Model 4 (USA PPOM) Threshold-Specific Coefficients",
+      "",
+      "![USA PPOM Coefficient Plot](RQ3 Images/RQ3_USA_PPOM_coefficients.png)",
+      "",
+      "### Model 5 (UK PPOM) Threshold-Specific Coefficients",
+      "",
+      "![UK PPOM Coefficient Plot](RQ3 Images/RQ3_UK_PPOM_coefficients.png)",
+      ""
+    )
+  } else {
+    NULL
+  },
+  "---",
+  "",
+  paste0("*Generated: ", Sys.time(), "*")
+)
+
 writeLines(md_content, md_file)
 cat("  ✓ RQ3_treatment_effects.md\n\n")
 
@@ -880,7 +1035,7 @@ residuals_ppom_usa <- tibble(
 cat("    Generating PPOM diagnostic plots...\n")
 ppom_diagnostics_plot_usa <- create_diagnostic_plots_rq3(residuals_ppom_usa, "USA PPOM Diagnostic Plots")
 ggsave(
-  filename = file.path(output_dir, "RQ3_USA_PPOM_diagnostics.png"),
+  filename = file.path(output_dir_images, "RQ3_USA_PPOM_diagnostics.png"),
   plot = ppom_diagnostics_plot_usa,
   width = 10, height = 8, dpi = 300
 )
@@ -915,7 +1070,7 @@ if (length(matching_rows_usa) > 0) {
   )
 
   ggsave(
-    filename = file.path(output_dir, "RQ3_USA_PPOM_coefficients.png"),
+    filename = file.path(output_dir_images, "RQ3_USA_PPOM_coefficients.png"),
     plot = ppom_coef_plot_usa,
     width = 10, height = 6, dpi = 300
   )
@@ -1019,7 +1174,7 @@ residuals_ppom_uk <- tibble(
 cat("    Generating PPOM diagnostic plots...\n")
 ppom_diagnostics_plot_uk <- create_diagnostic_plots_rq3(residuals_ppom_uk, "UK PPOM Diagnostic Plots")
 ggsave(
-  filename = file.path(output_dir, "RQ3_UK_PPOM_diagnostics.png"),
+  filename = file.path(output_dir_images, "RQ3_UK_PPOM_diagnostics.png"),
   plot = ppom_diagnostics_plot_uk,
   width = 10, height = 8, dpi = 300
 )
@@ -1053,7 +1208,7 @@ if (length(matching_rows_uk) > 0) {
   )
 
   ggsave(
-    filename = file.path(output_dir, "RQ3_UK_PPOM_coefficients.png"),
+    filename = file.path(output_dir_images, "RQ3_UK_PPOM_coefficients.png"),
     plot = ppom_coef_plot_uk,
     width = 10, height = 6, dpi = 300
   )
@@ -1061,150 +1216,3 @@ if (length(matching_rows_uk) > 0) {
 
 cat("    ✓ UK analysis complete\n\n")
 
-# ==============================================================================
-# 5.8 Append Country-Specific Results to Markdown
-# ==============================================================================
-
-cat("5.8 Appending country-specific results to markdown...\n")
-
-# Prepare USA PPOM coefficient summary
-usa_coef_summary_text <- paste(capture.output(print(summary(ppom_model_usa)@coef3)), collapse = "\n")
-
-# Prepare UK PPOM coefficient summary
-uk_coef_summary_text <- paste(capture.output(print(summary(ppom_model_uk)@coef3)), collapse = "\n")
-
-# Build USA-specific markdown section
-usa_md_content <- c(
-  "",
-  "---",
-  "",
-  "## Section 6: USA-Only Subgroup Analysis",
-  "",
-  "### Sample",
-  "",
-  paste0("- **N**: ", nrow(rq3_data_usa)),
-  paste0("  - Treatment: ", sum(rq3_data_usa$shown.infographic == "Shown NW Iinfographic")),
-  paste0("  - Control: ", sum(rq3_data_usa$shown.infographic == "No Infographic")),
-  "",
-  "### Model Specification",
-  "",
-  "**PPOM (Partial Proportional Odds Model)**",
-  "",
-  "- **Flexible predictors**: Treatment variable (shown.infographic)",
-  "  - Coefficients vary across support thresholds",
-  "- **Constrained predictors**: Covariates (age, sex, ethnicity, political affiliation, employment, student status)",
-  "  - Proportional odds constraint maintained for parsimony",
-  "",
-  "**Note**: Analysis skips POM and fits PPOM directly based on proportional odds violations detected in full-sample analysis.",
-  "",
-  "### Formula",
-  "",
-  paste0("```\n", deparse(formula_usa, width.cutoff = 500), "\n```"),
-  "",
-  "### Model Fit Statistics",
-  "",
-  paste0("- **AIC**: ", round(as.numeric(model_usa_ppom$model_stats$aic), 2)),
-  paste0("- **BIC**: ", round(as.numeric(model_usa_ppom$model_stats$bic), 2)),
-  paste0("- **Log-likelihood**: ", round(as.numeric(model_usa_ppom$model_stats$loglik), 2)),
-  paste0("- **N**: ", nrow(rq3_data_usa)),
-  "",
-  "### Coefficients Summary",
-  "",
-  "```",
-  usa_coef_summary_text,
-  "```",
-  "",
-  "**Interpretation**: Treatment variable has threshold-varying effects, allowing different associations at different levels of support for nuclear retaliation.",
-  "",
-  "### Residual Diagnostics",
-  "",
-  paste0("- **Deviance residuals**: [",
-         sprintf("%.2f", min(residuals_ppom_usa$deviance_residual)), ", ",
-         sprintf("%.2f", max(residuals_ppom_usa$deviance_residual)), "]"),
-  "",
-  "### Diagnostic Plots",
-  "",
-  "![USA PPOM Diagnostic Plots](RQ3_USA_PPOM_diagnostics.png)",
-  "",
-  "**Visual Assessment**: 4-panel diagnostic plot shows model fit for USA subsample.",
-  "",
-  "### Threshold-Specific Coefficients",
-  "",
-  "![USA PPOM Coefficient Plot](RQ3_USA_PPOM_coefficients.png)",
-  "",
-  "**Interpretation**: Shows how treatment effect varies across support thresholds in USA subsample.",
-  ""
-)
-
-# Build UK-specific markdown section
-uk_md_content <- c(
-  "",
-  "---",
-  "",
-  "## Section 7: UK-Only Subgroup Analysis",
-  "",
-  "### Sample",
-  "",
-  paste0("- **N**: ", nrow(rq3_data_uk)),
-  paste0("  - Treatment: ", sum(rq3_data_uk$shown.infographic == "Shown NW Iinfographic")),
-  paste0("  - Control: ", sum(rq3_data_uk$shown.infographic == "No Infographic")),
-  "",
-  "### Model Specification",
-  "",
-  "**PPOM (Partial Proportional Odds Model)**",
-  "",
-  "- **Flexible predictors**: Treatment variable (shown.infographic)",
-  "  - Coefficients vary across support thresholds",
-  "- **Constrained predictors**: Covariates (age, sex, ethnicity, political affiliation, employment, student status)",
-  "  - Proportional odds constraint maintained for parsimony",
-  "",
-  "**Note**: Analysis skips POM and fits PPOM directly based on proportional odds violations detected in full-sample analysis.",
-  "",
-  "### Formula",
-  "",
-  paste0("```\n", deparse(formula_uk, width.cutoff = 500), "\n```"),
-  "",
-  "### Model Fit Statistics",
-  "",
-  paste0("- **AIC**: ", round(as.numeric(model_uk_ppom$model_stats$aic), 2)),
-  paste0("- **BIC**: ", round(as.numeric(model_uk_ppom$model_stats$bic), 2)),
-  paste0("- **Log-likelihood**: ", round(as.numeric(model_uk_ppom$model_stats$loglik), 2)),
-  paste0("- **N**: ", nrow(rq3_data_uk)),
-  "",
-  "### Coefficients Summary",
-  "",
-  "```",
-  uk_coef_summary_text,
-  "```",
-  "",
-  "**Interpretation**: Treatment variable has threshold-varying effects, allowing different associations at different levels of support for nuclear retaliation.",
-  "",
-  "### Residual Diagnostics",
-  "",
-  paste0("- **Deviance residuals**: [",
-         sprintf("%.2f", min(residuals_ppom_uk$deviance_residual)), ", ",
-         sprintf("%.2f", max(residuals_ppom_uk$deviance_residual)), "]"),
-  "",
-  "### Diagnostic Plots",
-  "",
-  "![UK PPOM Diagnostic Plots](RQ3_UK_PPOM_diagnostics.png)",
-  "",
-  "**Visual Assessment**: 4-panel diagnostic plot shows model fit for UK subsample.",
-  "",
-  "### Threshold-Specific Coefficients",
-  "",
-  "![UK PPOM Coefficient Plot](RQ3_UK_PPOM_coefficients.png)",
-  "",
-  "**Interpretation**: Shows how treatment effect varies across support thresholds in UK subsample.",
-  "",
-  "---",
-  "",
-  paste0("*Country-specific analyses added: ", Sys.time(), "*")
-)
-
-# Append country-specific sections to existing markdown file
-existing_md <- readLines(md_file)
-combined_md <- c(existing_md, usa_md_content, uk_md_content)
-writeLines(combined_md, md_file)
-
-cat("  ✓ Country-specific sections added to markdown\n\n")

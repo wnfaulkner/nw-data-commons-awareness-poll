@@ -53,10 +53,14 @@ suppressMessages({
   library(grid)
 })
 
-# Create output directory
+# Create output directories
 output_dir <- "outputs"
+output_dir_images <- file.path(output_dir, "RQ2 Images")
 if (!dir.exists(output_dir)) {
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+}
+if (!dir.exists(output_dir_images)) {
+  dir.create(output_dir_images, recursive = TRUE, showWarnings = FALSE)
 }
 
 cat("\n")
@@ -526,7 +530,7 @@ create_diagnostic_plots <- function(residuals_tb, model_label) {
 cat("  - POM diagnostics...\n")
 pom_diagnostics_plot <- create_diagnostic_plots(residuals_pom, "POM Diagnostic Plots")
 ggsave(
-  filename = file.path(output_dir, "RQ2_POM_diagnostics.png"),
+  filename = file.path(output_dir_images, "RQ2_POM_diagnostics.png"),
   plot = pom_diagnostics_plot,
   width = 10, height = 8, dpi = 300
 )
@@ -535,7 +539,7 @@ ggsave(
 cat("  - PPOM diagnostics...\n")
 ppom_diagnostics_plot <- create_diagnostic_plots(residuals_ppom, "PPOM Diagnostic Plots")
 ggsave(
-  filename = file.path(output_dir, "RQ2_PPOM_diagnostics.png"),
+  filename = file.path(output_dir_images, "RQ2_PPOM_diagnostics.png"),
   plot = ppom_diagnostics_plot,
   width = 10, height = 8, dpi = 300
 )
@@ -570,7 +574,7 @@ pom_result_for_plot <- list(
 pom_forest <- plot_pom_coefficients(pom_result_for_plot, plot_title = "POM Coefficients")
 
 ggsave(
-  filename = file.path(output_dir, "RQ2_POM_forest.png"),
+  filename = file.path(output_dir_images, "RQ2_POM_forest.png"),
   plot = pom_forest,
   width = 10, height = 6, dpi = 300
 )
@@ -619,7 +623,7 @@ if (nrow(ppom_coef_data) > 0) {
   )
 
   ggsave(
-    filename = file.path(output_dir, "RQ2_PPOM_coefficients.png"),
+    filename = file.path(output_dir_images, "RQ2_PPOM_coefficients.png"),
     plot = ppom_coef_plot,
     width = 10, height = 6, dpi = 300
   )
@@ -753,7 +757,19 @@ md_content <- c(
   "",
   "---",
   "",
-  "## Section 4: Model Coefficients",
+  "## Section 4: Diagnostic Plots",
+  "",
+  "### Model 1 (POM) Diagnostics",
+  "",
+  "![POM Diagnostic Plots](RQ2 Images/RQ2_POM_diagnostics.png)",
+  "",
+  "### Model 2 (PPOM) Diagnostics",
+  "",
+  "![PPOM Diagnostic Plots](RQ2 Images/RQ2_PPOM_diagnostics.png)",
+  "",
+  "---",
+  "",
+  "## Section 5: Model Coefficients",
   "",
   "*Table shows coefficient estimates only (no standard errors or p-values).*",
   "",
@@ -763,27 +779,15 @@ md_content <- c(
   "",
   "---",
   "",
-  "## Section 5: Diagnostic Plots",
-  "",
-  "### Model 1 (POM) Diagnostics",
-  "",
-  "![POM Diagnostic Plots](RQ2_POM_diagnostics.png)",
-  "",
-  "### Model 2 (PPOM) Diagnostics",
-  "",
-  "![PPOM Diagnostic Plots](RQ2_PPOM_diagnostics.png)",
-  "",
-  "---",
-  "",
   "## Section 6: Forest Plots and Coefficient Plots",
   "",
   "### Model 1 (POM) Forest Plot",
   "",
-  "![POM Forest Plot](RQ2_POM_forest.png)",
+  "![POM Forest Plot](RQ2 Images/RQ2_POM_forest.png)",
   "",
   "### Model 2 (PPOM) Threshold-Specific Coefficients",
   "",
-  "![PPOM Coefficient Plot](RQ2_PPOM_coefficients.png)",
+  "![PPOM Coefficient Plot](RQ2 Images/RQ2_PPOM_coefficients.png)",
   "",
   "---",
   "",
