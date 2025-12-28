@@ -77,6 +77,13 @@ and this project uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
   - **Rationale:** Transparency is critical for reproducibility and verification. Direct VGAM code in RQ2 script makes analysis immediately inspectable. Separating analysis (top) from reporting (bottom) allows running analysis independently. With only 1 model per RQ, abstraction overhead not justified. Creates run_analyses.R for easy individual RQ execution.
   - **Impact:** Protocol sections All RQ sections - script organization, Section 0 - Computational environment (orchestration), Section 2.1 - Ordinal modeling workflow (direct VGAM implementation)
 
+
+### Changed
+- Google Sheets authentication failure prevented data loading and analysis execution. Error: 'sheets.id' environment variable not configured, causing authentication loop. ([DEC-010])
+  - **Decision:** Option B: Transition to CSV-based workflow
+  - **Rationale:** CSV-based workflow provides several advantages over Google Sheets authentication: (1) Version control: CSV files tracked in git provide complete audit trail of data changes. (2) Reproducibility: No user-specific credentials required; anyone with repository access can run analyses. (3) Portability: Analysis pipeline can run offline without internet connection or API access. (4) Simplicity: Eliminates Google Drive/Sheets R package dependencies and complex authentication setup. (5) Stability: CSV files are static snapshots; Google Sheets API changes won't break pipeline. Option A would restore functionality but maintains authentication complexity. Option C creates maintenance burden of keeping two data sources synchronized. Since data collection is complete and dataset is finalized, static CSV files are appropriate.
+  - **Impact:** Protocol sections Section 0.2 - Data Sources and Loading, Section 1.1 - Data Import and Initial Processing, All analysis scripts (load data from CSV instead of Google Sheets)
+
 ## [3.0] - 2025-12-07
 
 ### Added

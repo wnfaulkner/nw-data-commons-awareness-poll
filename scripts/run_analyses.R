@@ -51,22 +51,52 @@ if (load_data) {
   # Load packages
   suppressMessages({
     library(tidyverse)
-    library(googlesheets4)
     library(psych)
     library(gridExtra)
   })
 
-  # Authenticate and load data
-  gs4_auth(email = "w@wbnicholson.com")
+  # Load cleaned data from CSV (produced by scripts/a.cleaning/run_cleaning.R)
+  cat("Loading cleaned data from CSV...\n")
 
-  data.tb <- read_sheet(sheets.id, sheet = "data")
-  questions.tb <- read_sheet(sheets.id, sheet = "questions")
-  response.options.tb <- read_sheet(sheets.id, sheet = "response.options")
+  cleaned_data_path <- file.path("source_data", "source_data_clean.csv")
 
-  # Process data
-  data.tb <- prepare_data_for_analysis(data.tb)
+  if (!file.exists(cleaned_data_path)) {
+    stop(paste0(
+      "Cleaned data file not found: ", cleaned_data_path, "\n",
+      "Please run scripts/a.cleaning/run_cleaning.R first to generate the cleaned dataset."
+    ))
+  }
 
-  cat("\nData loaded and processed successfully.\n")
+  data.tb <- suppressMessages(
+    read_csv(cleaned_data_path, show_col_types = FALSE)
+  )
+
+  # Load config files (for reference, though main data is already processed)
+  questions.tb <- suppressMessages(
+    read_csv(
+      file.path("configs", "questions.csv"),
+      show_col_types = FALSE
+    )
+  ) %>%
+    janitor::remove_empty("cols")
+
+  response.options.tb <- suppressMessages(
+    read_csv(
+      file.path("configs", "response_options.csv"),
+      show_col_types = FALSE
+    )
+  ) %>%
+    janitor::remove_empty("cols")
+
+  cat("  ✓ Cleaned data loaded:", nrow(data.tb), "rows,", ncol(data.tb), "columns\n")
+  cat("  ✓ Questions config loaded:", nrow(questions.tb), "rows\n")
+  cat("  ✓ Response options config loaded:", nrow(response.options.tb), "rows\n\n")
+
+  # Note: prepare_data_for_analysis() is NOT called here because:
+  # - The cleaned CSV already has all processing applied from run_cleaning.R
+  # - All derived variables, recoding, and reshaping are already complete
+
+  cat("Data loaded successfully.\n")
   cat("Sample size:", nrow(data.tb), "\n\n")
 }
 

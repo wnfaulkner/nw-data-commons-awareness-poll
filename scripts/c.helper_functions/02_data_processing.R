@@ -3,6 +3,61 @@
 # Data cleaning, reshaping, and recoding functions
 # ==============================================================================
 
+# COLUMN NAME MATCHING FUNCTION
+IndexMatchToVectorFromTibble <- function(vector, tibble, match.varname,
+                                          replacement.vals.varname,
+                                          mult.replacements.per.cell = FALSE,
+                                          print.matches = FALSE) {
+  # Match elements in a vector to rows in a tibble and return replacement values
+  #
+  # Args:
+  #   vector: Character vector to match (e.g., column names)
+  #   tibble: Tibble to search in
+  #   match.varname: Column name in tibble to match against
+  #   replacement.vals.varname: Column name with replacement values
+  #   mult.replacements.per.cell: If TRUE, collapse multiple matches with ";"
+  #   print.matches: Print matching progress
+  #
+  # Returns:
+  #   Character vector of replacement values (or original if no match)
+
+  result <- sapply(vector, function(x) {
+    # Find matching rows
+    match_rows <- which(tibble[[match.varname]] == x)
+
+    if (length(match_rows) == 0) {
+      # No match found, return original value
+      if (print.matches) {
+        cat("No match for:", x, "(keeping original)\n")
+      }
+      return(x)
+    } else if (length(match_rows) == 1) {
+      # Single match found
+      replacement <- tibble[[replacement.vals.varname]][match_rows[1]]
+      if (print.matches) {
+        cat("Matched:", x, "->", replacement, "\n")
+      }
+      return(as.character(replacement))
+    } else {
+      # Multiple matches
+      if (mult.replacements.per.cell) {
+        # Return all matches collapsed
+        replacements <- tibble[[replacement.vals.varname]][match_rows]
+        return(paste(replacements, collapse = ";"))
+      } else {
+        # Return first match
+        replacement <- tibble[[replacement.vals.varname]][match_rows[1]]
+        if (print.matches) {
+          cat("Multiple matches for:", x, "(using first) ->", replacement, "\n")
+        }
+        return(as.character(replacement))
+      }
+    }
+  }, USE.NAMES = FALSE)
+
+  return(result)
+}
+
 # RECODING FUNCTION
 recode_from_theme <- function(varname, theme) {
   # Recode a variable based on response options for its theme

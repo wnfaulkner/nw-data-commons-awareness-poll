@@ -607,6 +607,289 @@ if (po_violated) {
 cat("\n")
 
 # ==============================================================================
+# 5.7 Country-Specific Subgroup Analyses
+# ==============================================================================
+
+cat("5.7 Running country-specific subgroup analyses...\n\n")
+
+# ------------------------------------------------------------------------------
+# USA-only analysis
+# ------------------------------------------------------------------------------
+
+cat("  USA-only analysis...\n")
+rq3_data_usa <- rq3_data %>% dplyr::filter(country.of.residence == "United States")
+
+cat("    Sample size:", nrow(rq3_data_usa), "\n")
+cat("      Treatment:", sum(rq3_data_usa$shown.infographic == "Shown NW Iinfographic"), "\n")
+cat("      Control:", sum(rq3_data_usa$shown.infographic == "No Infographic"), "\n")
+
+# Formula without country.of.residence
+formula_usa <- as.formula(paste(
+  "support.nuclear.strike.on.russia_numeric ~ shown.infographic +",
+  paste(setdiff(covariates, "country.of.residence"), collapse = " + ")
+))
+
+# Fit PPOM directly (skip POM based on main analysis findings)
+cat("    Fitting PPOM...\n")
+parallel_spec_usa <- FALSE ~ shown.infographic
+
+model_usa_ppom <- fit_ppom(
+  formula = formula_usa,
+  data = rq3_data_usa,
+  link = "logit",
+  parallel_spec = parallel_spec_usa,
+  verbose = FALSE
+)
+
+cat("      AIC:", round(model_usa_ppom$model_stats$aic, 2), "\n")
+
+# Extract treatment effect
+treatment_usa <- model_usa_ppom$coefficients %>%
+  dplyr::filter(grepl("infographic", variable))
+
+cat("      Treatment effect (avg OR):", round(treatment_usa$odds_ratio[1], 3), "\n")
+
+# Calculate PPOM residuals for USA
+n_obs_usa <- nrow(rq3_data_usa)
+ppom_model_usa <- model_usa_ppom$model
+
+pred_probs_ppom_usa <- predict(ppom_model_usa, type = "response")
+if (is.vector(pred_probs_ppom_usa)) {
+  pred_probs_ppom_usa <- matrix(pred_probs_ppom_usa, nrow = 1)
+}
+pred_class_ppom_usa <- apply(pred_probs_ppom_usa, 1, which.max)
+
+# Calculate linear predictor for PPOM
+if ("predictors" %in% methods::slotNames(ppom_model_usa)) {
+  predictors_matrix_usa <- ppom_model_usa@predictors
+  if (is.matrix(predictors_matrix_usa) && nrow(predictors_matrix_usa) == n_obs_usa) {
+    linear_pred_ppom_usa <- rowMeans(predictors_matrix_usa)
+  } else {
+    linear_pred_ppom_usa <- rep(0, n_obs_usa)
+  }
+} else {
+  linear_pred_ppom_usa <- rep(0, n_obs_usa)
+}
+
+# Extract observed values
+if ("y" %in% methods::slotNames(ppom_model_usa)) {
+  y_matrix_usa <- ppom_model_usa@y
+  if (is.matrix(y_matrix_usa)) {
+    y_observed_ppom_usa <- apply(y_matrix_usa, 1, which.max)
+  } else {
+    y_observed_ppom_usa <- as.numeric(y_matrix_usa)
+  }
+} else {
+  y_observed_ppom_usa <- as.numeric(ordered(rq3_data_usa$support.nuclear.strike.on.russia_numeric))
+}
+
+# Calculate deviance residuals
+dev_resid_ppom_usa <- numeric(n_obs_usa)
+for (i in seq_len(n_obs_usa)) {
+  p_obs <- pred_probs_ppom_usa[i, y_observed_ppom_usa[i]]
+  dev_component <- sqrt(-2 * log(p_obs))
+  sign_val <- ifelse(
+    y_observed_ppom_usa[i] > pred_class_ppom_usa[i], 1,
+    ifelse(y_observed_ppom_usa[i] < pred_class_ppom_usa[i], -1, 0)
+  )
+  dev_resid_ppom_usa[i] <- sign_val * dev_component
+}
+
+# Store USA PPOM residuals
+residuals_ppom_usa <- tibble(
+  obs_index = seq_len(n_obs_usa),
+  observed = y_observed_ppom_usa,
+  predicted_class = pred_class_ppom_usa,
+  linear_predictor = linear_pred_ppom_usa,
+  deviance_residual = dev_resid_ppom_usa
+)
+
+# Generate USA PPOM diagnostic plots
+cat("    Generating PPOM diagnostic plots...\n")
+ppom_diagnostics_plot_usa <- create_diagnostic_plots_rq3(residuals_ppom_usa, "USA PPOM Diagnostic Plots")
+ggsave(
+  filename = file.path(output_dir_images, "RQ3_USA_PPOM_diagnostics.png"),
+  plot = ppom_diagnostics_plot_usa,
+  width = 10, height = 8, dpi = 300
+)
+
+# Generate USA PPOM threshold-specific coefficient plot
+cat("    Generating PPOM threshold-specific coefficient plot...\n")
+coef_summary_ppom_matrix_usa <- summary(ppom_model_usa)@coef3
+treatment_var_name <- "shown.infographic"
+matching_rows_usa <- grep(paste0("^", treatment_var_name), rownames(coef_summary_ppom_matrix_usa), value = TRUE)
+
+if (length(matching_rows_usa) > 0) {
+  ppom_coef_data_usa <- data.frame()
+  for (row_name in matching_rows_usa) {
+    threshold_num <- as.numeric(gsub(".*:(\\d+)$", "\\1", row_name))
+    estimate <- coef_summary_ppom_matrix_usa[row_name, "Estimate"]
+    std_error <- coef_summary_ppom_matrix_usa[row_name, "Std. Error"]
+
+    ppom_coef_data_usa <- rbind(ppom_coef_data_usa, data.frame(
+      variable = treatment_var_name,
+      threshold = threshold_num,
+      estimate = estimate,
+      std_error = std_error,
+      odds_ratio = exp(estimate),
+      ci_lower = exp(estimate - 1.96 * std_error),
+      ci_upper = exp(estimate + 1.96 * std_error)
+    ))
+  }
+
+  ppom_coef_plot_usa <- plot_ppom_threshold_coefficients(
+    coef_data = ppom_coef_data_usa,
+    plot_title = "USA PPOM Threshold-Specific Coefficients (Treatment Effect)"
+  )
+
+  ggsave(
+    filename = file.path(output_dir_images, "RQ3_USA_PPOM_coefficients.png"),
+    plot = ppom_coef_plot_usa,
+    width = 10, height = 6, dpi = 300
+  )
+}
+
+cat("    ✓ USA analysis complete\n\n")
+
+# ------------------------------------------------------------------------------
+# UK-only analysis
+# ------------------------------------------------------------------------------
+
+cat("  UK-only analysis...\n")
+rq3_data_uk <- rq3_data %>% dplyr::filter(country.of.residence == "United Kingdom")
+
+cat("    Sample size:", nrow(rq3_data_uk), "\n")
+cat("      Treatment:", sum(rq3_data_uk$shown.infographic == "Shown NW Iinfographic"), "\n")
+cat("      Control:", sum(rq3_data_uk$shown.infographic == "No Infographic"), "\n")
+
+# Formula without country.of.residence
+formula_uk <- as.formula(paste(
+  "support.nuclear.strike.on.russia_numeric ~ shown.infographic +",
+  paste(setdiff(covariates, "country.of.residence"), collapse = " + ")
+))
+
+# Fit PPOM directly
+cat("    Fitting PPOM...\n")
+parallel_spec_uk <- FALSE ~ shown.infographic
+
+model_uk_ppom <- fit_ppom(
+  formula = formula_uk,
+  data = rq3_data_uk,
+  link = "logit",
+  parallel_spec = parallel_spec_uk,
+  verbose = FALSE
+)
+
+cat("      AIC:", round(model_uk_ppom$model_stats$aic, 2), "\n")
+
+# Extract treatment effect
+treatment_uk <- model_uk_ppom$coefficients %>%
+  dplyr::filter(grepl("infographic", variable))
+
+cat("      Treatment effect (avg OR):", round(treatment_uk$odds_ratio[1], 3), "\n")
+
+# Calculate PPOM residuals for UK
+n_obs_uk <- nrow(rq3_data_uk)
+ppom_model_uk <- model_uk_ppom$model
+
+pred_probs_ppom_uk <- predict(ppom_model_uk, type = "response")
+if (is.vector(pred_probs_ppom_uk)) {
+  pred_probs_ppom_uk <- matrix(pred_probs_ppom_uk, nrow = 1)
+}
+pred_class_ppom_uk <- apply(pred_probs_ppom_uk, 1, which.max)
+
+# Calculate linear predictor for PPOM
+if ("predictors" %in% methods::slotNames(ppom_model_uk)) {
+  predictors_matrix_uk <- ppom_model_uk@predictors
+  if (is.matrix(predictors_matrix_uk) && nrow(predictors_matrix_uk) == n_obs_uk) {
+    linear_pred_ppom_uk <- rowMeans(predictors_matrix_uk)
+  } else {
+    linear_pred_ppom_uk <- rep(0, n_obs_uk)
+  }
+} else {
+  linear_pred_ppom_uk <- rep(0, n_obs_uk)
+}
+
+# Extract observed values
+if ("y" %in% methods::slotNames(ppom_model_uk)) {
+  y_matrix_uk <- ppom_model_uk@y
+  if (is.matrix(y_matrix_uk)) {
+    y_observed_ppom_uk <- apply(y_matrix_uk, 1, which.max)
+  } else {
+    y_observed_ppom_uk <- as.numeric(y_matrix_uk)
+  }
+} else {
+  y_observed_ppom_uk <- as.numeric(ordered(rq3_data_uk$support.nuclear.strike.on.russia_numeric))
+}
+
+# Calculate deviance residuals
+dev_resid_ppom_uk <- numeric(n_obs_uk)
+for (i in seq_len(n_obs_uk)) {
+  p_obs <- pred_probs_ppom_uk[i, y_observed_ppom_uk[i]]
+  dev_component <- sqrt(-2 * log(p_obs))
+  sign_val <- ifelse(
+    y_observed_ppom_uk[i] > pred_class_ppom_uk[i], 1,
+    ifelse(y_observed_ppom_uk[i] < pred_class_ppom_uk[i], -1, 0)
+  )
+  dev_resid_ppom_uk[i] <- sign_val * dev_component
+}
+
+# Store UK PPOM residuals
+residuals_ppom_uk <- tibble(
+  obs_index = seq_len(n_obs_uk),
+  observed = y_observed_ppom_uk,
+  predicted_class = pred_class_ppom_uk,
+  linear_predictor = linear_pred_ppom_uk,
+  deviance_residual = dev_resid_ppom_uk
+)
+
+# Generate UK PPOM diagnostic plots
+cat("    Generating PPOM diagnostic plots...\n")
+ppom_diagnostics_plot_uk <- create_diagnostic_plots_rq3(residuals_ppom_uk, "UK PPOM Diagnostic Plots")
+ggsave(
+  filename = file.path(output_dir_images, "RQ3_UK_PPOM_diagnostics.png"),
+  plot = ppom_diagnostics_plot_uk,
+  width = 10, height = 8, dpi = 300
+)
+
+# Generate UK PPOM threshold-specific coefficient plot
+cat("    Generating PPOM threshold-specific coefficient plot...\n")
+coef_summary_ppom_matrix_uk <- summary(ppom_model_uk)@coef3
+matching_rows_uk <- grep(paste0("^", treatment_var_name), rownames(coef_summary_ppom_matrix_uk), value = TRUE)
+
+if (length(matching_rows_uk) > 0) {
+  ppom_coef_data_uk <- data.frame()
+  for (row_name in matching_rows_uk) {
+    threshold_num <- as.numeric(gsub(".*:(\\d+)$", "\\1", row_name))
+    estimate <- coef_summary_ppom_matrix_uk[row_name, "Estimate"]
+    std_error <- coef_summary_ppom_matrix_uk[row_name, "Std. Error"]
+
+    ppom_coef_data_uk <- rbind(ppom_coef_data_uk, data.frame(
+      variable = treatment_var_name,
+      threshold = threshold_num,
+      estimate = estimate,
+      std_error = std_error,
+      odds_ratio = exp(estimate),
+      ci_lower = exp(estimate - 1.96 * std_error),
+      ci_upper = exp(estimate + 1.96 * std_error)
+    ))
+  }
+
+  ppom_coef_plot_uk <- plot_ppom_threshold_coefficients(
+    coef_data = ppom_coef_data_uk,
+    plot_title = "UK PPOM Threshold-Specific Coefficients (Treatment Effect)"
+  )
+
+  ggsave(
+    filename = file.path(output_dir_images, "RQ3_UK_PPOM_coefficients.png"),
+    plot = ppom_coef_plot_uk,
+    width = 10, height = 6, dpi = 300
+  )
+}
+
+cat("    ✓ UK analysis complete\n\n")
+
+# ==============================================================================
 # 5.6 Generate Markdown Output
 # ==============================================================================
 
@@ -932,287 +1215,4 @@ cat("Output files:\n")
 cat("  -", md_file, "\n\n")
 
 cat("===============================================================================\n\n")
-
-# ==============================================================================
-# 5.7 Country-Specific Subgroup Analyses
-# ==============================================================================
-
-cat("5.7 Running country-specific subgroup analyses...\n\n")
-
-# ------------------------------------------------------------------------------
-# USA-only analysis
-# ------------------------------------------------------------------------------
-
-cat("  USA-only analysis...\n")
-rq3_data_usa <- rq3_data %>% dplyr::filter(country.of.residence == "United States")
-
-cat("    Sample size:", nrow(rq3_data_usa), "\n")
-cat("      Treatment:", sum(rq3_data_usa$shown.infographic == "Shown NW Iinfographic"), "\n")
-cat("      Control:", sum(rq3_data_usa$shown.infographic == "No Infographic"), "\n")
-
-# Formula without country.of.residence
-formula_usa <- as.formula(paste(
-  "support.nuclear.strike.on.russia_numeric ~ shown.infographic +",
-  paste(setdiff(covariates, "country.of.residence"), collapse = " + ")
-))
-
-# Fit PPOM directly (skip POM based on main analysis findings)
-cat("    Fitting PPOM...\n")
-parallel_spec_usa <- FALSE ~ shown.infographic
-
-model_usa_ppom <- fit_ppom(
-  formula = formula_usa,
-  data = rq3_data_usa,
-  link = "logit",
-  parallel_spec = parallel_spec_usa,
-  verbose = FALSE
-)
-
-cat("      AIC:", round(model_usa_ppom$model_stats$aic, 2), "\n")
-
-# Extract treatment effect
-treatment_usa <- model_usa_ppom$coefficients %>%
-  dplyr::filter(grepl("infographic", variable))
-
-cat("      Treatment effect (avg OR):", round(treatment_usa$odds_ratio[1], 3), "\n")
-
-# Calculate PPOM residuals for USA
-n_obs_usa <- nrow(rq3_data_usa)
-ppom_model_usa <- model_usa_ppom$model
-
-pred_probs_ppom_usa <- predict(ppom_model_usa, type = "response")
-if (is.vector(pred_probs_ppom_usa)) {
-  pred_probs_ppom_usa <- matrix(pred_probs_ppom_usa, nrow = 1)
-}
-pred_class_ppom_usa <- apply(pred_probs_ppom_usa, 1, which.max)
-
-# Calculate linear predictor for PPOM
-if ("predictors" %in% methods::slotNames(ppom_model_usa)) {
-  predictors_matrix_usa <- ppom_model_usa@predictors
-  if (is.matrix(predictors_matrix_usa) && nrow(predictors_matrix_usa) == n_obs_usa) {
-    linear_pred_ppom_usa <- rowMeans(predictors_matrix_usa)
-  } else {
-    linear_pred_ppom_usa <- rep(0, n_obs_usa)
-  }
-} else {
-  linear_pred_ppom_usa <- rep(0, n_obs_usa)
-}
-
-# Extract observed values
-if ("y" %in% methods::slotNames(ppom_model_usa)) {
-  y_matrix_usa <- ppom_model_usa@y
-  if (is.matrix(y_matrix_usa)) {
-    y_observed_ppom_usa <- apply(y_matrix_usa, 1, which.max)
-  } else {
-    y_observed_ppom_usa <- as.numeric(y_matrix_usa)
-  }
-} else {
-  y_observed_ppom_usa <- as.numeric(ordered(rq3_data_usa$support.nuclear.strike.on.russia_numeric))
-}
-
-# Calculate deviance residuals
-dev_resid_ppom_usa <- numeric(n_obs_usa)
-for (i in seq_len(n_obs_usa)) {
-  p_obs <- pred_probs_ppom_usa[i, y_observed_ppom_usa[i]]
-  dev_component <- sqrt(-2 * log(p_obs))
-  sign_val <- ifelse(
-    y_observed_ppom_usa[i] > pred_class_ppom_usa[i], 1,
-    ifelse(y_observed_ppom_usa[i] < pred_class_ppom_usa[i], -1, 0)
-  )
-  dev_resid_ppom_usa[i] <- sign_val * dev_component
-}
-
-# Store USA PPOM residuals
-residuals_ppom_usa <- tibble(
-  obs_index = seq_len(n_obs_usa),
-  observed = y_observed_ppom_usa,
-  predicted_class = pred_class_ppom_usa,
-  linear_predictor = linear_pred_ppom_usa,
-  deviance_residual = dev_resid_ppom_usa
-)
-
-# Generate USA PPOM diagnostic plots
-cat("    Generating PPOM diagnostic plots...\n")
-ppom_diagnostics_plot_usa <- create_diagnostic_plots_rq3(residuals_ppom_usa, "USA PPOM Diagnostic Plots")
-ggsave(
-  filename = file.path(output_dir_images, "RQ3_USA_PPOM_diagnostics.png"),
-  plot = ppom_diagnostics_plot_usa,
-  width = 10, height = 8, dpi = 300
-)
-
-# Generate USA PPOM threshold-specific coefficient plot
-cat("    Generating PPOM threshold-specific coefficient plot...\n")
-coef_summary_ppom_matrix_usa <- summary(ppom_model_usa)@coef3
-treatment_var_name <- "shown.infographic"
-matching_rows_usa <- grep(paste0("^", treatment_var_name), rownames(coef_summary_ppom_matrix_usa), value = TRUE)
-
-if (length(matching_rows_usa) > 0) {
-  ppom_coef_data_usa <- data.frame()
-  for (row_name in matching_rows_usa) {
-    threshold_num <- as.numeric(gsub(".*:(\\d+)$", "\\1", row_name))
-    estimate <- coef_summary_ppom_matrix_usa[row_name, "Estimate"]
-    std_error <- coef_summary_ppom_matrix_usa[row_name, "Std. Error"]
-
-    ppom_coef_data_usa <- rbind(ppom_coef_data_usa, data.frame(
-      variable = treatment_var_name,
-      threshold = threshold_num,
-      estimate = estimate,
-      std_error = std_error,
-      odds_ratio = exp(estimate),
-      ci_lower = exp(estimate - 1.96 * std_error),
-      ci_upper = exp(estimate + 1.96 * std_error)
-    ))
-  }
-
-  ppom_coef_plot_usa <- plot_ppom_threshold_coefficients(
-    coef_data = ppom_coef_data_usa,
-    plot_title = "USA PPOM Threshold-Specific Coefficients (Treatment Effect)"
-  )
-
-  ggsave(
-    filename = file.path(output_dir_images, "RQ3_USA_PPOM_coefficients.png"),
-    plot = ppom_coef_plot_usa,
-    width = 10, height = 6, dpi = 300
-  )
-}
-
-cat("    ✓ USA analysis complete\n\n")
-
-# ------------------------------------------------------------------------------
-# UK-only analysis
-# ------------------------------------------------------------------------------
-
-cat("  UK-only analysis...\n")
-rq3_data_uk <- rq3_data %>% dplyr::filter(country.of.residence == "United Kingdom")
-
-cat("    Sample size:", nrow(rq3_data_uk), "\n")
-cat("      Treatment:", sum(rq3_data_uk$shown.infographic == "Shown NW Iinfographic"), "\n")
-cat("      Control:", sum(rq3_data_uk$shown.infographic == "No Infographic"), "\n")
-
-# Formula without country.of.residence
-formula_uk <- as.formula(paste(
-  "support.nuclear.strike.on.russia_numeric ~ shown.infographic +",
-  paste(setdiff(covariates, "country.of.residence"), collapse = " + ")
-))
-
-# Fit PPOM directly
-cat("    Fitting PPOM...\n")
-parallel_spec_uk <- FALSE ~ shown.infographic
-
-model_uk_ppom <- fit_ppom(
-  formula = formula_uk,
-  data = rq3_data_uk,
-  link = "logit",
-  parallel_spec = parallel_spec_uk,
-  verbose = FALSE
-)
-
-cat("      AIC:", round(model_uk_ppom$model_stats$aic, 2), "\n")
-
-# Extract treatment effect
-treatment_uk <- model_uk_ppom$coefficients %>%
-  dplyr::filter(grepl("infographic", variable))
-
-cat("      Treatment effect (avg OR):", round(treatment_uk$odds_ratio[1], 3), "\n")
-
-# Calculate PPOM residuals for UK
-n_obs_uk <- nrow(rq3_data_uk)
-ppom_model_uk <- model_uk_ppom$model
-
-pred_probs_ppom_uk <- predict(ppom_model_uk, type = "response")
-if (is.vector(pred_probs_ppom_uk)) {
-  pred_probs_ppom_uk <- matrix(pred_probs_ppom_uk, nrow = 1)
-}
-pred_class_ppom_uk <- apply(pred_probs_ppom_uk, 1, which.max)
-
-# Calculate linear predictor for PPOM
-if ("predictors" %in% methods::slotNames(ppom_model_uk)) {
-  predictors_matrix_uk <- ppom_model_uk@predictors
-  if (is.matrix(predictors_matrix_uk) && nrow(predictors_matrix_uk) == n_obs_uk) {
-    linear_pred_ppom_uk <- rowMeans(predictors_matrix_uk)
-  } else {
-    linear_pred_ppom_uk <- rep(0, n_obs_uk)
-  }
-} else {
-  linear_pred_ppom_uk <- rep(0, n_obs_uk)
-}
-
-# Extract observed values
-if ("y" %in% methods::slotNames(ppom_model_uk)) {
-  y_matrix_uk <- ppom_model_uk@y
-  if (is.matrix(y_matrix_uk)) {
-    y_observed_ppom_uk <- apply(y_matrix_uk, 1, which.max)
-  } else {
-    y_observed_ppom_uk <- as.numeric(y_matrix_uk)
-  }
-} else {
-  y_observed_ppom_uk <- as.numeric(ordered(rq3_data_uk$support.nuclear.strike.on.russia_numeric))
-}
-
-# Calculate deviance residuals
-dev_resid_ppom_uk <- numeric(n_obs_uk)
-for (i in seq_len(n_obs_uk)) {
-  p_obs <- pred_probs_ppom_uk[i, y_observed_ppom_uk[i]]
-  dev_component <- sqrt(-2 * log(p_obs))
-  sign_val <- ifelse(
-    y_observed_ppom_uk[i] > pred_class_ppom_uk[i], 1,
-    ifelse(y_observed_ppom_uk[i] < pred_class_ppom_uk[i], -1, 0)
-  )
-  dev_resid_ppom_uk[i] <- sign_val * dev_component
-}
-
-# Store UK PPOM residuals
-residuals_ppom_uk <- tibble(
-  obs_index = seq_len(n_obs_uk),
-  observed = y_observed_ppom_uk,
-  predicted_class = pred_class_ppom_uk,
-  linear_predictor = linear_pred_ppom_uk,
-  deviance_residual = dev_resid_ppom_uk
-)
-
-# Generate UK PPOM diagnostic plots
-cat("    Generating PPOM diagnostic plots...\n")
-ppom_diagnostics_plot_uk <- create_diagnostic_plots_rq3(residuals_ppom_uk, "UK PPOM Diagnostic Plots")
-ggsave(
-  filename = file.path(output_dir_images, "RQ3_UK_PPOM_diagnostics.png"),
-  plot = ppom_diagnostics_plot_uk,
-  width = 10, height = 8, dpi = 300
-)
-
-# Generate UK PPOM threshold-specific coefficient plot
-cat("    Generating PPOM threshold-specific coefficient plot...\n")
-coef_summary_ppom_matrix_uk <- summary(ppom_model_uk)@coef3
-matching_rows_uk <- grep(paste0("^", treatment_var_name), rownames(coef_summary_ppom_matrix_uk), value = TRUE)
-
-if (length(matching_rows_uk) > 0) {
-  ppom_coef_data_uk <- data.frame()
-  for (row_name in matching_rows_uk) {
-    threshold_num <- as.numeric(gsub(".*:(\\d+)$", "\\1", row_name))
-    estimate <- coef_summary_ppom_matrix_uk[row_name, "Estimate"]
-    std_error <- coef_summary_ppom_matrix_uk[row_name, "Std. Error"]
-
-    ppom_coef_data_uk <- rbind(ppom_coef_data_uk, data.frame(
-      variable = treatment_var_name,
-      threshold = threshold_num,
-      estimate = estimate,
-      std_error = std_error,
-      odds_ratio = exp(estimate),
-      ci_lower = exp(estimate - 1.96 * std_error),
-      ci_upper = exp(estimate + 1.96 * std_error)
-    ))
-  }
-
-  ppom_coef_plot_uk <- plot_ppom_threshold_coefficients(
-    coef_data = ppom_coef_data_uk,
-    plot_title = "UK PPOM Threshold-Specific Coefficients (Treatment Effect)"
-  )
-
-  ggsave(
-    filename = file.path(output_dir_images, "RQ3_UK_PPOM_coefficients.png"),
-    plot = ppom_coef_plot_uk,
-    width = 10, height = 6, dpi = 300
-  )
-}
-
-cat("    ✓ UK analysis complete\n\n")
 
