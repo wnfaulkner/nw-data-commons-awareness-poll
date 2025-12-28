@@ -129,7 +129,13 @@ decision_poly_cor <- decision_poly$rho
 rownames(decision_poly_cor) <- item_short_names
 colnames(decision_poly_cor) <- item_short_names
 
-cat("  Polychoric correlation matrix computed.\n\n")
+cat("  Polychoric correlation matrix computed.\n")
+
+# Export polychoric correlation matrix to CSV for Excel
+poly_cor_df <- as.data.frame(decision_poly_cor)
+poly_cor_df <- tibble::rownames_to_column(poly_cor_df, "Item")
+write.csv(poly_cor_df, file.path(output_dir, "RQ4_polychoric_correlation_matrix.csv"), row.names = FALSE)
+cat("  ✓ Polychoric correlation matrix exported to CSV\n\n")
 
 # 1-factor solution
 cat("  Fitting 1-factor model...\n")
@@ -231,6 +237,19 @@ md_content <- c(
   }),
   "",
   "## Polychoric Correlation Matrix",
+  "",
+  "**CSV file exported:** `outputs/RQ4_polychoric_correlation_matrix.csv`",
+  "",
+  "**Tab-delimited table (copy-paste to Excel):**",
+  "",
+  "```",
+  paste0("Item\t", paste(item_short_names, collapse = "\t")),
+  apply(cbind(item_short_names, round(decision_poly_cor, 3)), 1, function(row) {
+    paste(row, collapse = "\t")
+  }),
+  "```",
+  "",
+  "**Formatted display:**",
   "",
   "```",
   paste(capture.output(print(round(decision_poly_cor, 3))), collapse = "\n"),
