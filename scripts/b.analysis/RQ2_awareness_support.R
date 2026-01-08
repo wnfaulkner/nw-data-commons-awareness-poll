@@ -96,6 +96,7 @@ rq2_data <- data.tb %>%
     awareness_mean,
     age, sex,
     ethnicity.collapsed, political.affiliation.collapsed,
+    political.affiliation,  # Uncollapsed (11 levels) for Model 3
     employment.status, student.status
   ) %>%
   tidyr::drop_na()
@@ -221,10 +222,33 @@ residuals_pom <- tibble(
 )
 
 # ------------------------------------------------------------------------------
-# 1.4 Visual Inspection Findings (per DEC-007)
+# 1.4 Create Reduced Dataset for Models 2 & 3
 # ------------------------------------------------------------------------------
 
-cat("1.4 Visual Inspection Results (per DEC-007)...\n\n")
+cat("1.4 Creating reduced dataset for Models 2 & 3...\n")
+cat("  Excluding: sex == 'Prefer not to say'\n")
+
+# Create reduced dataset (exclude "Prefer not to say")
+rq2_data_reduced <- rq2_data %>%
+  dplyr::filter(sex != "Prefer not to say")
+
+n_obs_reduced <- nrow(rq2_data_reduced)
+n_excluded <- n_obs - n_obs_reduced
+
+cat("  Original sample size:", n_obs, "\n")
+cat("  Excluded observations:", n_excluded, "\n")
+cat("  Reduced sample size:", n_obs_reduced, "\n\n")
+
+# Create ordered outcome for reduced dataset
+rq2_data_reduced$outcome_ordered <- ordered(
+  rq2_data_reduced$support.nuclear.strike.on.russia_numeric
+)
+
+# ------------------------------------------------------------------------------
+# 1.5 Visual Inspection Findings (per DEC-007)
+# ------------------------------------------------------------------------------
+
+cat("1.5 Visual Inspection Results (per DEC-007)...\n\n")
 
 cat("  HUMAN ANALYST VISUAL INSPECTION FINDINGS:\n\n")
 
@@ -256,29 +280,38 @@ cat("  Note: Brant test bypassed per DEC-007\n")
 cat("        (visual inspection definitive)\n\n")
 
 # ------------------------------------------------------------------------------
-# 1.5 Fit PPOM - Direct VGAM::vglm implementation
+# 1.6 Fit PPOM Model 2 - Reduced Variables, Reduced Dataset
 # ------------------------------------------------------------------------------
 
-cat("1.5 Fitting PPOM (VGAM::vglm - direct implementation)...\n")
+cat("1.6 Fitting PPOM Model 2 (3-level politics, reduced variables)...\n")
+
+# Model 2 formula: EXCLUDE employment.status and student.status
+formula_ppom_model2 <- outcome_ordered ~
+  nw.awareness.1980s_numeric +
+  nw.awareness.recent.academic_numeric +
+  nw.awareness.recent.media_numeric +
+  age + sex +
+  ethnicity.collapsed +
+  political.affiliation.collapsed
+
+cat("  Variables excluded: employment.status, student.status\n")
+cat("  Sample: Reduced (N =", n_obs_reduced, ", excluding sex == 'Prefer not to say')\n")
 
 # PPOM specification: Only awareness variables have flexible coefficients
-# Rationale: Targeted flexibility for primary predictors; covariates
-# constrained for parsimony and computational stability
-
 parallel_spec <- FALSE ~ nw.awareness.1980s_numeric +
                           nw.awareness.recent.academic_numeric +
                           nw.awareness.recent.media_numeric
 
 cat("  Specification: Awareness variables flexible, covariates constrained\n")
 
-# Fit PPOM using VGAM::vglm
+# Fit PPOM using VGAM::vglm with REDUCED DATASET
 model_ppom <- VGAM::vglm(
-  formula = formula_pom,
+  formula = formula_ppom_model2,
   family = VGAM::cumulative(
     link = "logitlink",
     parallel = parallel_spec
   ),
-  data = rq2_data
+  data = rq2_data_reduced
 )
 
 # Extract model statistics
@@ -293,10 +326,10 @@ cat("    Log-likelihood:", round(loglik_ppom, 2), "\n")
 cat("    N =", nobs(model_ppom), "\n\n")
 
 # ------------------------------------------------------------------------------
-# 1.6 Calculate PPOM Residuals
+# 1.7 Calculate PPOM Model 2 Residuals
 # ------------------------------------------------------------------------------
 
-cat("1.6 Calculating PPOM residuals...\n")
+cat("1.7 Calculating PPOM Model 2 residuals...\n")
 
 # Get predicted probabilities
 pred_probs_ppom <- predict(model_ppom, type = "response")
@@ -308,13 +341,13 @@ pred_class_ppom <- apply(pred_probs_ppom, 1, which.max)
 # Calculate linear predictor for PPOM (average across thresholds)
 if ("predictors" %in% methods::slotNames(model_ppom)) {
   predictors_matrix <- model_ppom@predictors
-  if (is.matrix(predictors_matrix) && nrow(predictors_matrix) == n_obs) {
+  if (is.matrix(predictors_matrix) && nrow(predictors_matrix) == n_obs_reduced) {
     linear_pred_ppom <- rowMeans(predictors_matrix)
   } else {
-    linear_pred_ppom <- rep(0, n_obs)  # Fallback
+    linear_pred_ppom <- rep(0, n_obs_reduced)  # Fallback
   }
 } else {
-  linear_pred_ppom <- rep(0, n_obs)  # Fallback
+  linear_pred_ppom <- rep(0, n_obs_reduced)  # Fallback
 }
 
 # Extract observed values from VGAM model
@@ -330,8 +363,8 @@ if ("y" %in% methods::slotNames(model_ppom)) {
 }
 
 # Calculate deviance residuals
-dev_resid_ppom <- numeric(n_obs)
-for (i in seq_len(n_obs)) {
+dev_resid_ppom <- numeric(n_obs_reduced)
+for (i in seq_len(n_obs_reduced)) {
   p_obs <- pred_probs_ppom[i, y_observed_ppom[i]]
   dev_component <- sqrt(-2 * log(p_obs))
   sign_val <- ifelse(
@@ -342,8 +375,8 @@ for (i in seq_len(n_obs)) {
 }
 
 # Calculate Pearson residuals
-pearson_resid_ppom <- numeric(n_obs)
-for (i in seq_len(n_obs)) {
+pearson_resid_ppom <- numeric(n_obs_reduced)
+for (i in seq_len(n_obs_reduced)) {
   p_obs <- pred_probs_ppom[i, y_observed_ppom[i]]
   pearson_resid_ppom[i] <- (1 - p_obs) / sqrt(p_obs * (1 - p_obs))
 }
@@ -355,9 +388,9 @@ cat("  Pearson residuals range: [",
     sprintf("%.2f", min(pearson_resid_ppom)), ", ",
     sprintf("%.2f", max(pearson_resid_ppom)), "]\n\n", sep = "")
 
-# Store PPOM residuals for plotting
+# Store PPOM Model 2 residuals for plotting
 residuals_ppom <- tibble(
-  obs_index = seq_len(n_obs),
+  obs_index = seq_len(n_obs_reduced),
   observed = y_observed_ppom,
   predicted_class = pred_class_ppom,
   linear_predictor = linear_pred_ppom,
@@ -366,10 +399,130 @@ residuals_ppom <- tibble(
 )
 
 # ------------------------------------------------------------------------------
-# 1.7 Model Comparison (POM vs PPOM)
+# 1.8 Fit PPOM Model 3 - 11-level Politics, Reduced Variables, Reduced Dataset
 # ------------------------------------------------------------------------------
 
-cat("1.7 Comparing POM vs PPOM predictions...\n")
+cat("1.8 Fitting PPOM Model 3 (11-level politics, reduced variables)...\n")
+
+# Build formula with uncollapsed political affiliation, EXCLUDING employment/student
+formula_ppom_uncollapsed <- outcome_ordered ~
+  nw.awareness.1980s_numeric +
+  nw.awareness.recent.academic_numeric +
+  nw.awareness.recent.media_numeric +
+  age + sex +
+  ethnicity.collapsed +
+  political.affiliation  # Uncollapsed (11 levels)
+
+cat("  Variables excluded: employment.status, student.status\n")
+cat("  Sample: Reduced (N =", n_obs_reduced, ", excluding sex == 'Prefer not to say')\n")
+
+# Same parallel specification as Model 2
+parallel_spec_uncollapsed <- FALSE ~ nw.awareness.1980s_numeric +
+                                      nw.awareness.recent.academic_numeric +
+                                      nw.awareness.recent.media_numeric
+
+cat("  Specification: Awareness variables flexible, covariates constrained\n")
+cat("  Political affiliation: UNCOLLAPSED (11 levels)\n")
+
+# Fit PPOM with uncollapsed political affiliation using REDUCED DATASET
+model_ppom_uncollapsed <- VGAM::vglm(
+  formula = formula_ppom_uncollapsed,
+  family = VGAM::cumulative(
+    link = "logitlink",
+    parallel = parallel_spec_uncollapsed
+  ),
+  data = rq2_data_reduced
+)
+
+# Extract model statistics
+aic_ppom_uncollapsed <- AIC(model_ppom_uncollapsed)
+bic_ppom_uncollapsed <- BIC(model_ppom_uncollapsed)
+loglik_ppom_uncollapsed <- logLik(model_ppom_uncollapsed)[1]
+
+cat("  PPOM (uncollapsed) fitted successfully\n")
+cat("    AIC:", round(aic_ppom_uncollapsed, 2), "\n")
+cat("    BIC:", round(bic_ppom_uncollapsed, 2), "\n")
+cat("    Log-likelihood:", round(loglik_ppom_uncollapsed, 2), "\n")
+cat("    N =", nobs(model_ppom_uncollapsed), "\n\n")
+
+# ------------------------------------------------------------------------------
+# 1.9 Calculate PPOM Model 3 Residuals
+# ------------------------------------------------------------------------------
+
+cat("1.9 Calculating PPOM Model 3 residuals...\n")
+
+# Get predicted probabilities
+pred_probs_ppom_uncollapsed <- predict(model_ppom_uncollapsed, type = "response")
+if (is.vector(pred_probs_ppom_uncollapsed)) {
+  pred_probs_ppom_uncollapsed <- matrix(pred_probs_ppom_uncollapsed, nrow = 1)
+}
+pred_class_ppom_uncollapsed <- apply(pred_probs_ppom_uncollapsed, 1, which.max)
+
+# Calculate linear predictor for PPOM uncollapsed (average across thresholds)
+if ("predictors" %in% methods::slotNames(model_ppom_uncollapsed)) {
+  predictors_matrix_uncollapsed <- model_ppom_uncollapsed@predictors
+  if (is.matrix(predictors_matrix_uncollapsed) && nrow(predictors_matrix_uncollapsed) == n_obs_reduced) {
+    linear_pred_ppom_uncollapsed <- rowMeans(predictors_matrix_uncollapsed)
+  } else {
+    linear_pred_ppom_uncollapsed <- rep(0, n_obs_reduced)
+  }
+} else {
+  linear_pred_ppom_uncollapsed <- rep(0, n_obs_reduced)
+}
+
+# Extract observed values
+if ("y" %in% methods::slotNames(model_ppom_uncollapsed)) {
+  y_matrix_uncollapsed <- model_ppom_uncollapsed@y
+  if (is.matrix(y_matrix_uncollapsed)) {
+    y_observed_ppom_uncollapsed <- apply(y_matrix_uncollapsed, 1, which.max)
+  } else {
+    y_observed_ppom_uncollapsed <- as.numeric(y_matrix_uncollapsed)
+  }
+} else {
+  y_observed_ppom_uncollapsed <- y_observed
+}
+
+# Calculate deviance residuals
+dev_resid_ppom_uncollapsed <- numeric(n_obs_reduced)
+for (i in seq_len(n_obs_reduced)) {
+  p_obs <- pred_probs_ppom_uncollapsed[i, y_observed_ppom_uncollapsed[i]]
+  dev_component <- sqrt(-2 * log(p_obs))
+  sign_val <- ifelse(
+    y_observed_ppom_uncollapsed[i] > pred_class_ppom_uncollapsed[i], 1,
+    ifelse(y_observed_ppom_uncollapsed[i] < pred_class_ppom_uncollapsed[i], -1, 0)
+  )
+  dev_resid_ppom_uncollapsed[i] <- sign_val * dev_component
+}
+
+# Calculate Pearson residuals
+pearson_resid_ppom_uncollapsed <- numeric(n_obs_reduced)
+for (i in seq_len(n_obs_reduced)) {
+  p_obs <- pred_probs_ppom_uncollapsed[i, y_observed_ppom_uncollapsed[i]]
+  pearson_resid_ppom_uncollapsed[i] <- (1 - p_obs) / sqrt(p_obs * (1 - p_obs))
+}
+
+cat("  Deviance residuals range: [",
+    sprintf("%.2f", min(dev_resid_ppom_uncollapsed)), ", ",
+    sprintf("%.2f", max(dev_resid_ppom_uncollapsed)), "]\n", sep = "")
+cat("  Pearson residuals range: [",
+    sprintf("%.2f", min(pearson_resid_ppom_uncollapsed)), ", ",
+    sprintf("%.2f", max(pearson_resid_ppom_uncollapsed)), "]\n\n", sep = "")
+
+# Store PPOM Model 3 residuals for plotting
+residuals_ppom_uncollapsed <- tibble(
+  obs_index = seq_len(n_obs_reduced),
+  observed = y_observed_ppom_uncollapsed,
+  predicted_class = pred_class_ppom_uncollapsed,
+  linear_predictor = linear_pred_ppom_uncollapsed,
+  deviance_residual = dev_resid_ppom_uncollapsed,
+  pearson_residual = pearson_resid_ppom_uncollapsed
+)
+
+# ------------------------------------------------------------------------------
+# 1.10 Model Comparison (POM vs PPOM vs PPOM Uncollapsed)
+# ------------------------------------------------------------------------------
+
+cat("1.10 Comparing POM vs PPOM vs PPOM Uncollapsed...\n")
 
 # Create representative prediction data
 representative_profile <- rq2_data %>%
@@ -544,6 +697,15 @@ ggsave(
   width = 10, height = 8, dpi = 300
 )
 
+# Generate PPOM Uncollapsed diagnostic plots
+cat("  - PPOM Uncollapsed diagnostics...\n")
+ppom_uncollapsed_diagnostics_plot <- create_diagnostic_plots(residuals_ppom_uncollapsed, "PPOM Uncollapsed Diagnostic Plots")
+ggsave(
+  filename = file.path(output_dir_images, "RQ2_PPOM_uncollapsed_diagnostics.png"),
+  plot = ppom_uncollapsed_diagnostics_plot,
+  width = 10, height = 8, dpi = 300
+)
+
 cat("  ✓ Diagnostic plots saved\n\n")
 
 # ------------------------------------------------------------------------------
@@ -628,9 +790,53 @@ if (nrow(ppom_coef_data) > 0) {
     width = 10, height = 6, dpi = 300
   )
 
-  cat("  ✓ PPOM coefficient plot saved\n\n")
+  cat("  ✓ PPOM coefficient plot saved\n")
 } else {
   cat("  ⚠ No threshold-specific coefficients found for PPOM plot\n\n")
+}
+
+# Extract PPOM Uncollapsed coefficients for Model 3 visualization
+coef_summary_ppom_uncollapsed_matrix <- summary(model_ppom_uncollapsed)@coef3
+
+# Extract coefficients for awareness variables across thresholds (Model 3)
+ppom_uncollapsed_coef_data <- data.frame()
+for (var in awareness_vars) {
+  matching_rows <- grep(paste0("^", var, ":"), rownames(coef_summary_ppom_uncollapsed_matrix), value = TRUE)
+  if (length(matching_rows) > 0) {
+    for (row_name in matching_rows) {
+      threshold_num <- as.numeric(gsub(".*:(\\d+)$", "\\1", row_name))
+      estimate <- coef_summary_ppom_uncollapsed_matrix[row_name, "Estimate"]
+      std_error <- coef_summary_ppom_uncollapsed_matrix[row_name, "Std. Error"]
+
+      ppom_uncollapsed_coef_data <- rbind(ppom_uncollapsed_coef_data, data.frame(
+        variable = var,
+        threshold = threshold_num,
+        estimate = estimate,
+        std_error = std_error,
+        odds_ratio = exp(estimate),
+        ci_lower = exp(estimate - 1.96 * std_error),
+        ci_upper = exp(estimate + 1.96 * std_error)
+      ))
+    }
+  }
+}
+
+# Create PPOM Uncollapsed threshold-specific coefficient plot (Model 3)
+if (nrow(ppom_uncollapsed_coef_data) > 0) {
+  ppom_uncollapsed_coef_plot <- plot_ppom_threshold_coefficients(
+    coef_data = ppom_uncollapsed_coef_data,
+    plot_title = "PPOM Model 3 Threshold-Specific Coefficients (Awareness Variables)"
+  )
+
+  ggsave(
+    filename = file.path(output_dir_images, "RQ2_PPOM_uncollapsed_coefficients.png"),
+    plot = ppom_uncollapsed_coef_plot,
+    width = 10, height = 6, dpi = 300
+  )
+
+  cat("  ✓ PPOM Model 3 coefficient plot saved\n\n")
+} else {
+  cat("  ⚠ No threshold-specific coefficients found for PPOM Model 3 plot\n\n")
 }
 
 # ------------------------------------------------------------------------------
@@ -647,7 +853,10 @@ n_thresholds <- n_levels - 1
 # Extract PPOM coefficients
 coef_summary_ppom <- summary(model_ppom)@coef3
 
-# Build coefficient comparison table (Section 4)
+# Extract PPOM Uncollapsed coefficients
+coef_summary_ppom_uncollapsed <- summary(model_ppom_uncollapsed)@coef3
+
+# Build coefficient comparison table (Section 5)
 # Get all unique variable names (excluding intercepts)
 pom_vars <- rownames(coef_summary_pom)[1:(nrow(coef_summary_pom) - n_thresholds)]
 
@@ -655,8 +864,12 @@ pom_vars <- rownames(coef_summary_pom)[1:(nrow(coef_summary_pom) - n_thresholds)
 ppom_row_names <- rownames(coef_summary_ppom)
 ppom_vars <- ppom_row_names[!grepl("^\\(Intercept\\)", ppom_row_names)]
 
+# Get PPOM Uncollapsed variable names (excluding intercepts)
+ppom_uncollapsed_row_names <- rownames(coef_summary_ppom_uncollapsed)
+ppom_uncollapsed_vars <- ppom_uncollapsed_row_names[!grepl("^\\(Intercept\\)", ppom_uncollapsed_row_names)]
+
 # Collect all unique variable names (base variables + threshold-specific)
-all_vars <- unique(c(pom_vars, ppom_vars))
+all_vars <- unique(c(pom_vars, ppom_vars, ppom_uncollapsed_vars))
 
 # Build coefficient table data
 coef_table_rows <- c()
@@ -675,8 +888,15 @@ for (var in all_vars) {
     "—"
   }
 
+  # PPOM Uncollapsed coefficient
+  ppom_uncollapsed_coef <- if (var %in% ppom_uncollapsed_vars) {
+    sprintf("%.4f", coef_summary_ppom_uncollapsed[var, "Estimate"])
+  } else {
+    "—"
+  }
+
   coef_table_rows <- c(coef_table_rows,
-    paste0("| ", var, " | ", pom_coef, " | ", ppom_coef, " |")
+    paste0("| ", var, " | ", pom_coef, " | ", ppom_coef, " | ", ppom_uncollapsed_coef, " |")
   )
 }
 
@@ -696,10 +916,11 @@ md_content <- c(
   "",
   "## Section 1: Sample Sizes",
   "",
-  "| Model | Complete Cases | Treatment | Control |",
-  "|-------|----------------|-----------|---------|",
-  paste0("| Model 1 (POM) | ", n_obs, " | ", n_obs, " | — |"),
-  paste0("| Model 2 (PPOM) | ", n_obs, " | ", n_obs, " | — |"),
+  "| Model | Complete Cases | Treatment | Control | Notes |",
+  "|-------|----------------|-----------|---------|-------|",
+  paste0("| Model 1 (POM) | ", n_obs, " | ", n_obs, " | — | Full sample |"),
+  paste0("| Model 2 (PPOM - 3-level politics) | ", n_obs_reduced, " | ", n_obs_reduced, " | — | Excludes sex=='Prefer not to say' (", n_excluded, " obs) |"),
+  paste0("| Model 3 (PPOM - 11-level politics) | ", n_obs_reduced, " | ", n_obs_reduced, " | — | Excludes sex=='Prefer not to say' (", n_excluded, " obs) |"),
   "",
   "*Note: RQ2 analyzes treatment group only (respondents shown infographic)*",
   "",
@@ -723,23 +944,47 @@ md_content <- c(
   "- Link: Logit",
   "- Implementation: MASS::polr",
   "",
-  "### Model 2: PPOM (Partial Proportional Odds Model)",
+  "### Model 2: PPOM (Partial Proportional Odds Model - 3-level politics)",
   "",
   "**Formula:**",
   "```",
   "support.nuclear.strike.on.russia ~ nw.awareness.1980s +",
   "                                     nw.awareness.recent.academic +",
   "                                     nw.awareness.recent.media +",
-  "                                     age + sex + ethnicity + politics +",
-  "                                     employment + student.status",
+  "                                     age + sex + ethnicity + politics.collapsed (3 levels)",
   "```",
   "",
   "**Specification:**",
   "- **Flexible predictors**: Awareness variables (1980s, academic, media)",
   "  - Coefficients vary across support thresholds",
-  "- **Constrained predictors**: Covariates (age, sex, ethnicity, politics, employment, student status)",
+  "- **Constrained predictors**: Covariates (age, sex, ethnicity, politics.collapsed)",
   "  - Proportional odds constraint maintained",
-  "- **Rationale**: Targeted flexibility for primary predictors; computational stability",
+  "- **Political affiliation**: 3-level collapse (Left-leaning, Right-leaning, Unaffiliated/Other)",
+  "- **Variables excluded**: employment.status, student.status",
+  "- **Sample restriction**: sex != 'Prefer not to say'",
+  "- **Rationale**: Targeted flexibility for primary predictors; reduced variable set for parsimony",
+  "- **Link**: Logit",
+  "- **Implementation**: VGAM::vglm",
+  "",
+  "### Model 3: PPOM (Partial Proportional Odds Model - 11-level politics)",
+  "",
+  "**Formula:**",
+  "```",
+  "support.nuclear.strike.on.russia ~ nw.awareness.1980s +",
+  "                                     nw.awareness.recent.academic +",
+  "                                     nw.awareness.recent.media +",
+  "                                     age + sex + ethnicity + political.affiliation (11 levels)",
+  "```",
+  "",
+  "**Specification:**",
+  "- **Flexible predictors**: Awareness variables (1980s, academic, media)",
+  "  - Coefficients vary across support thresholds",
+  "- **Constrained predictors**: Covariates (age, sex, ethnicity, political.affiliation)",
+  "  - Proportional odds constraint maintained",
+  "- **Political affiliation**: UNCOLLAPSED 11 levels (all parties separated)",
+  "- **Variables excluded**: employment.status, student.status",
+  "- **Sample restriction**: sex != 'Prefer not to say'",
+  "- **Rationale**: Test whether fine-grained political party distinctions affect results",
   "- **Link**: Logit",
   "- **Implementation**: VGAM::vglm",
   "",
@@ -747,13 +992,16 @@ md_content <- c(
   "",
   "## Section 3: Model Fit Statistics",
   "",
-  "| Model | AIC | BIC | Log-Likelihood | N | Δ AIC (vs POM) |",
-  "|-------|-----|-----|----------------|---|----------------|",
+  "| Model | AIC | BIC | Log-Likelihood | N | Δ AIC (vs Model 1) |",
+  "|-------|-----|-----|----------------|---|---------------------|",
   paste0("| Model 1 (POM) | ", round(aic_pom, 2), " | ", round(bic_pom, 2),
          " | ", round(loglik_pom, 2), " | ", n_obs, " | — |"),
-  paste0("| Model 2 (PPOM) | ", round(aic_ppom, 2), " | ", round(bic_ppom, 2),
-         " | ", round(loglik_ppom, 2), " | ", n_obs, " | ",
-         round(aic_ppom - aic_pom, 2), " |"),
+  paste0("| Model 2 (PPOM - 3-level) | ", round(aic_ppom, 2), " | ", round(bic_ppom, 2),
+         " | ", round(loglik_ppom, 2), " | ", n_obs_reduced, " | Not comparable* |"),
+  paste0("| Model 3 (PPOM - 11-level) | ", round(aic_ppom_uncollapsed, 2), " | ", round(bic_ppom_uncollapsed, 2),
+         " | ", round(loglik_ppom_uncollapsed, 2), " | ", n_obs_reduced, " | Not comparable* |"),
+  "",
+  "*Note: Models 2 & 3 use different sample (n=", n_obs_reduced, ") than Model 1 (n=", n_obs, "), so AIC not directly comparable",
   "",
   "---",
   "",
@@ -763,9 +1011,13 @@ md_content <- c(
   "",
   "![POM Diagnostic Plots](RQ2 Images/RQ2_POM_diagnostics.png)",
   "",
-  "### Model 2 (PPOM) Diagnostics",
+  "### Model 2 (PPOM - 3-level politics) Diagnostics",
   "",
   "![PPOM Diagnostic Plots](RQ2 Images/RQ2_PPOM_diagnostics.png)",
+  "",
+  "### Model 3 (PPOM - 11-level politics) Diagnostics",
+  "",
+  "![PPOM Uncollapsed Diagnostic Plots](RQ2 Images/RQ2_PPOM_uncollapsed_diagnostics.png)",
   "",
   "---",
   "",
@@ -773,8 +1025,8 @@ md_content <- c(
   "",
   "*Table shows coefficient estimates only (no standard errors or p-values).*",
   "",
-  "| Variable | Model 1 (POM) | Model 2 (PPOM) |",
-  "|----------|---------------|----------------|",
+  "| Variable | Model 1 (POM) | Model 2 (PPOM - 3-level) | Model 3 (PPOM - 11-level) |",
+  "|----------|---------------|--------------------------|---------------------------|",
   coef_table_rows,
   "",
   "---",
@@ -788,6 +1040,10 @@ md_content <- c(
   "### Model 2 (PPOM) Threshold-Specific Coefficients",
   "",
   "![PPOM Coefficient Plot](RQ2 Images/RQ2_PPOM_coefficients.png)",
+  "",
+  "### Model 3 (PPOM - 11-level politics) Threshold-Specific Coefficients",
+  "",
+  "![PPOM Model 3 Coefficient Plot](RQ2 Images/RQ2_PPOM_uncollapsed_coefficients.png)",
   "",
   "---",
   "",

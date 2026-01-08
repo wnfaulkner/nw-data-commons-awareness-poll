@@ -202,18 +202,27 @@ create_collapsed_categories <- function(data_tb) {
 
   data_tb <- data_tb %>%
     mutate(
-      # POLITICAL AFFILIATION: 11 levels → 4 levels
+      # POLITICAL AFFILIATION: 11 levels → 3 levels
       # Collapsed by ideological orientation and engagement
       political.affiliation.collapsed = case_when(
-        political.affiliation %in% c("UK-Labour", "USA-Democrat", "UK-Green", "UK-SNP") ~
+        political.affiliation %in% c("UK-Labour", "USA-Democrat", "UK-Green", "UK-SNP", "UK-Plaid Cymru") ~
           "Left-leaning",
         political.affiliation %in% c("UK-Conservative", "USA-Republican") ~
           "Right-leaning",
         political.affiliation %in% c("USA-Independent", "UK-Independent",
-                                      "Don't Know", "Would not vote") ~
-          "Unaffiliated/Uncertain",
-        political.affiliation %in% c("Other", "UK-Plaid Cymru") ~
-          "Other",
+                                      "Don't Know", "Would not vote", "Other") ~
+          "Unaffiliated/Other",
+        TRUE ~ NA_character_
+      ),
+
+      # POLITICAL AFFILIATION BINARY: 2 levels (Left vs Right, UK parties only)
+      # Excludes: USA-Democrat, Independents, Don't Know, Would not vote, Other, blanks
+      # For sensitivity analysis comparing left-right ideological dimension
+      political.affiliation.binary = case_when(
+        political.affiliation %in% c("UK-Labour", "UK-Green", "UK-Plaid Cymru", "UK-SNP") ~
+          "Left",
+        political.affiliation %in% c("UK-Conservative", "USA-Republican") ~
+          "Right",
         TRUE ~ NA_character_
       ),
 
@@ -230,7 +239,11 @@ create_collapsed_categories <- function(data_tb) {
     mutate(
       political.affiliation.collapsed = factor(
         political.affiliation.collapsed,
-        levels = c("Unaffiliated/Uncertain", "Left-leaning", "Right-leaning", "Other")
+        levels = c("Unaffiliated/Other", "Left-leaning", "Right-leaning")
+      ),
+      political.affiliation.binary = factor(
+        political.affiliation.binary,
+        levels = c("Right", "Left")
       ),
       ethnicity.collapsed = factor(
         ethnicity.collapsed,
